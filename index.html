@@ -101,11 +101,10 @@
 
         const PRESET_COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#ff6b6b', '#EC4899', '#8B5CF6', '#6366F1', '#14B8A6', '#84CC16', '#F59E0B'];
         const COLORS_EXPENSE = ['#FF8042', '#FFBB28', '#FF6B6B', '#D946EF', '#8B5CF6', '#EC4899', '#F59E0B'];
-        // --- 修改 1: 在初始账本中加入 "竞猜" 账本 ---
         const INITIAL_LEDGERS = [
             { id: 'l1', name: '日常生活', budget: 5000, color: '#0088FE', isPinned: true, excludeFromAsset: false }, 
             { id: 'l2', name: '旅行基金', budget: 8000, color: '#00C49F', isPinned: false, excludeFromAsset: false }, 
-            { id: 'l_bet', name: '竞猜', budget: 0, color: '#8B5CF6', isPinned: false, excludeFromAsset: true, isBetting: true } // 默认为 betting 类型
+            { id: 'l_bet', name: '竞猜', budget: 0, color: '#8B5CF6', isPinned: false, excludeFromAsset: true, isBetting: true } 
         ];
         const INITIAL_TRANSACTIONS = [];
 
@@ -122,12 +121,80 @@
         const getWeekRange = (date = new Date()) => { const current = new Date(date); current.setHours(0, 0, 0, 0); const day = current.getDay(); const diff = current.getDate() - day + (day === 0 ? -6 : 1); const start = new Date(current); start.setDate(diff); start.setHours(0, 0, 0, 0); const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23, 59, 59, 999); return { start, end }; };
         const getMonthRange = (date = new Date()) => { const start = new Date(date.getFullYear(), date.getMonth(), 1); const end = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999); return { start, end }; };
         const isSavingsLedger = (ledger) => { return ledger && (ledger.name.includes('存款') || ledger.name.includes('储蓄') || ledger.name.includes('备用') || ledger.name === '资金池'); };
-        // --- 修改 2: 判断是否为竞猜账本 ---
         const isBettingLedger = (ledger) => { return ledger && (ledger.isBetting || ledger.name === '竞猜'); };
         
         const isDateInPeriod = (dateStr, periodType) => { const date = new Date(dateStr); const now = new Date(); if (periodType === 'week') { const { start, end } = getWeekRange(now); return date >= start && date <= end; } else if (periodType === 'month') { return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear(); } else if (periodType === 'year') { return date.getFullYear() === now.getFullYear(); } else { return true; } };
         const getDaysInCurrentMonth = () => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(); };
         const CustomLabel = ({ viewBox, total, label, subLabel }) => { const { cx, cy } = viewBox; return (<text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"><tspan x={cx} y={cy - 10} dy="-0.5em" fontSize="10" fill="#888">{label}</tspan><tspan x={cx} y={cy + 10} dy="0.5em" fontSize="14" fontWeight="bold" fill="#333">{subLabel || formatMoney(total)}</tspan></text>); };
+
+        // --- 功能 1: 右滑删除组件 ---
+        const SwipeableLedgerItem = ({ children, onDelete, onClick }) => {
+            const [startX, setStartX] = useState(0);
+            const [currentX, setCurrentX] = useState(0);
+            const [isDragging, setIsDragging] = useState(false);
+            const itemRef = useRef(null);
+
+            const onTouchStart = (e) => {
+                setStartX(e.touches[0].clientX);
+                setIsDragging(true);
+            };
+
+            const onTouchMove = (e) => {
+                if (!isDragging) return;
+                const touchX = e.touches[0].clientX;
+                const diff = touchX - startX;
+                // 只允许向右滑 (diff > 0)
+                if (diff > 0) {
+                    // 限制最大滑动距离为 150px
+                    setCurrentX(Math.min(diff, 150));
+                }
+            };
+
+            const onTouchEnd = () => {
+                setIsDragging(false);
+                // 如果滑动超过 100px，触发删除
+                if (currentX > 100) {
+                    onDelete();
+                    setCurrentX(0); // 立即归位，或者可以做一个动画让它消失
+                } else {
+                    // 否则回弹
+                    setCurrentX(0);
+                }
+            };
+
+            // 处理点击：如果正在滑动，不触发点击
+            const handleClick = (e) => {
+                if (currentX === 0) {
+                    onClick();
+                }
+            };
+
+            return (
+                <div className="relative mb-4 group select-none">
+                    {/* 背景层 (显示删除图标) */}
+                    <div className="absolute inset-y-0 left-0 w-full bg-red-500 rounded-2xl flex items-center pl-6 z-0">
+                        <div className="flex items-center text-white gap-2">
+                            <Trash2 size={24} />
+                            <span className="font-bold text-sm">删除</span>
+                        </div>
+                    </div>
+                    
+                    {/* 前景层 (账本卡片) */}
+                    <div 
+                        ref={itemRef}
+                        className="relative z-10 bg-white transition-transform duration-200 ease-out rounded-2xl"
+                        style={{ transform: `translateX(${currentX}px)` }}
+                        onTouchStart={onTouchStart}
+                        onTouchMove={onTouchMove}
+                        onTouchEnd={onTouchEnd}
+                        onClick={handleClick}
+                    >
+                        {children}
+                    </div>
+                </div>
+            );
+        };
+
 
         function App() {
           const [ledgers, setLedgers] = useState(() => {
@@ -170,6 +237,7 @@
           const [editingLedger, setEditingLedger] = useState(null);
           const [editingTx, setEditingTx] = useState(null);
           const fileInputRef = useRef(null);
+          const singleLedgerFileInputRef = useRef(null); // --- 功能 2: 单账本导入引用 ---
           const [editAssetValue, setEditAssetValue] = useState('');
 
           const budgetScaleFactor = useMemo(() => { if (period === 'week') return 7 / getDaysInCurrentMonth(); if (period === 'month') return 1; if (period === 'year') return 12; return 1; }, [period]);
@@ -188,7 +256,7 @@
           }, [transactions, initialBalance, ledgers]);
 
           const savingsBalance = useMemo(() => {
-              const otherLedgers = ledgers.filter(l => !isSavingsLedger(l) && !isBettingLedger(l)); // 排除储蓄和竞猜
+              const otherLedgers = ledgers.filter(l => !isSavingsLedger(l) && !isBettingLedger(l)); 
               const totalReservedForOthers = otherLedgers.reduce((sum, l) => {
                   const budget = l.budget * budgetScaleFactor;
                   const txs = transactions.filter(t => t.ledgerId === l.id && isDateInPeriod(t.date, period));
@@ -205,7 +273,6 @@
           
           const activeLedgerStats = useMemo(() => { 
               if (!activeLedgerId) return null; 
-              // 获取该账本所有交易（用于计算累计）
               const allTimeTxs = transactions.filter(t => t.ledgerId === activeLedgerId).sort((a, b) => new Date(b.date) - new Date(a.date));
               
               const periodLedgerTxs = allTimeTxs.filter(t => isDateInPeriod(t.date, period)); 
@@ -221,14 +288,11 @@
                   remaining = savingsBalance;
                   periodBudget = savingsBalance; 
               } else if (isBettingLedger(currentLedger)) {
-                  // --- 修改 3: 竞猜账本逻辑 ---
-                  // 剩余金额 = 历史总收入 - 历史总支出 (不重置)
                   const allIncome = allTimeTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
                   const allExpense = allTimeTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
                   remaining = allIncome - allExpense;
-                  periodBudget = 0; // 竞猜没有预算概念
+                  periodBudget = 0; 
 
-                  // 胜率统计
                   const winCount = allTimeTxs.filter(t => t.type === 'income').length;
                   const lossCount = allTimeTxs.filter(t => t.type === 'expense').length;
                   const totalCount = winCount + lossCount;
@@ -346,7 +410,7 @@
               if (!editingLedger.name) { alert("请输入账本名称"); return; } 
               const scale = budgetScaleFactor; 
               const finalBudget = parseFloat(editingLedger.budget) / scale; 
-              // 自动判断：如果名字包含“竞猜”，则自动标记为 betting 类型
+              
               const isBetting = editingLedger.name.includes('竞猜') || editingLedger.isBetting;
               
               const newLedgerObj = { 
@@ -366,6 +430,66 @@
           const handleDeleteLedger = (id) => { if (confirm('确定要删除这个账本及其所有记录吗？')) { setLedgers(ledgers.filter(l => l.id !== id)); setTransactions(transactions.filter(t => t.ledgerId !== id)); setShowEditLedgerModal(false); if (activeLedgerId === id) setView('dashboard'); } };
           const exportData = () => { const dataStr = JSON.stringify({ ledgers, transactions, totalExpectedIncome, initialBalance }); const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr); const linkElement = document.createElement('a'); linkElement.setAttribute('href', dataUri); linkElement.setAttribute('download', `account_data_${new Date().toLocaleDateString()}.json`); linkElement.click(); };
           const importData = (event) => { const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (e) => { try { const parsed = JSON.parse(e.target.result); if (parsed.ledgers && parsed.transactions) { setLedgers(parsed.ledgers); setTransactions(parsed.transactions); if (parsed.totalExpectedIncome) setTotalExpectedIncome(parsed.totalExpectedIncome); if(parsed.initialBalance || parsed.manualTotalAsset) setInitialBalance(parsed.initialBalance || parsed.manualTotalAsset); alert('数据导入成功！'); setShowDataModal(false); } } catch (err) { alert('解析文件失败'); } }; reader.readAsText(file); };
+
+          // --- 功能 2: 导出单个账本逻辑 ---
+          const handleExportSingleLedger = () => {
+              if (!editingLedger) return;
+              const targetLedger = ledgers.find(l => l.id === editingLedger.id) || editingLedger;
+              const relatedTxs = transactions.filter(t => t.ledgerId === targetLedger.id);
+              
+              const dataStr = JSON.stringify({ 
+                  type: 'single_ledger_backup',
+                  version: 1,
+                  ledger: targetLedger, 
+                  transactions: relatedTxs 
+              });
+              
+              const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+              const linkElement = document.createElement('a');
+              linkElement.setAttribute('href', dataUri);
+              linkElement.setAttribute('download', `${targetLedger.name}_backup.json`);
+              linkElement.click();
+          };
+
+          // --- 功能 2: 导入单个账本逻辑 ---
+          const handleImportSingleLedger = (event) => {
+              const file = event.target.files[0];
+              if (!file) return;
+              const reader = new FileReader();
+              reader.onload = (e) => {
+                  try {
+                      const parsed = JSON.parse(e.target.result);
+                      if (parsed.type === 'single_ledger_backup' && parsed.ledger && parsed.transactions) {
+                          if (!confirm(`确定要导入账本 "${parsed.ledger.name}" 吗？\n这将覆盖当前账本的设置，并合并交易记录。`)) return;
+
+                          // 1. 更新或添加账本定义
+                          const newLedgerDef = parsed.ledger;
+                          const ledgerExists = ledgers.find(l => l.id === newLedgerDef.id);
+                          if (ledgerExists) {
+                              setLedgers(prev => prev.map(l => l.id === newLedgerDef.id ? newLedgerDef : l));
+                          } else {
+                              setLedgers(prev => [...prev, newLedgerDef]);
+                          }
+
+                          // 2. 处理交易记录 (先删除该账本下的旧记录，再添加新记录，避免ID冲突也可以选择保留)
+                          // 策略：覆盖模式。删除当前账本ID下的所有记录，写入导入的记录。
+                          setTransactions(prev => {
+                              const otherTxs = prev.filter(t => t.ledgerId !== newLedgerDef.id);
+                              return [...otherTxs, ...parsed.transactions];
+                          });
+
+                          alert('账本导入成功！');
+                          setShowEditLedgerModal(false);
+                      } else {
+                          alert('文件格式错误：这不是一个有效的单账本备份文件。');
+                      }
+                  } catch (err) {
+                      console.error(err);
+                      alert('解析文件失败');
+                  }
+              };
+              reader.readAsText(file);
+          };
 
           const renderAddModal = () => {
             const handleNumPad = (val) => {
@@ -484,7 +608,7 @@
                       <div className="px-6">
                         <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800">我的账本</h2><button onClick={initNewLedger} className="flex items-center text-blue-600 bg-blue-50 px-3 py-1.5 rounded-full text-xs font-bold hover:bg-blue-100 transition-colors"><Plus size={14} className="mr-1"/> 新建</button></div>
                         <div className="mb-4 relative"><input type="text" placeholder="搜索账本..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-white border border-gray-200 rounded-xl py-2 pl-10 pr-4 text-sm focus:outline-blue-500 shadow-sm"/><Search size={16} className="absolute left-3 top-2.5 text-gray-400" /></div>
-                        <div className="grid gap-4">
+                        <div className="grid gap-1"> {/* 减小了gap以适应右滑组件的margin */}
                           {sortedAndFilteredLedgers.length === 0 ? <div className="text-center text-gray-400 py-8 text-sm">没有找到匹配的账本</div> : sortedAndFilteredLedgers.map(ledger => {
                               let remaining = 0;
                               let percent = 0;
@@ -493,12 +617,10 @@
                                   remaining = savingsBalance;
                                   percent = 100;
                               } else if (isBettingLedger(ledger)) {
-                                  // --- 修改 4: 列表页 - 竞猜账本剩余金额逻辑 ---
-                                  // 计算该账本所有历史盈亏
                                   const allTimeIncome = transactions.filter(t => t.ledgerId === ledger.id && t.type === 'income').reduce((acc, curr) => acc + curr.amount, 0);
                                   const allTimeExpense = transactions.filter(t => t.ledgerId === ledger.id && t.type === 'expense').reduce((acc, curr) => acc + curr.amount, 0);
                                   remaining = allTimeIncome - allTimeExpense;
-                                  percent = 100; // 进度条填满，或者可以用不同颜色表示盈亏
+                                  percent = 100; 
                               } else {
                                   const periodBudget = ledger.budget * budgetScaleFactor;
                                   const periodExpense = transactions.filter(t => t.ledgerId === ledger.id && t.type === 'expense' && isDateInPeriod(t.date, period)).reduce((acc, curr) => acc + curr.amount, 0);
@@ -508,36 +630,43 @@
                                   percent = Math.min((periodExpense / (totalAvailable || 1)) * 100, 100);
                               }
 
+                              // --- 修改：使用 SwipeableLedgerItem 包裹 ---
                               return (
-                                <div key={ledger.id} onClick={() => openLedger(ledger.id)} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer active:scale-[0.98] group relative overflow-hidden">
-                                   <div className={`absolute left-0 top-0 bottom-0 w-1 ${remaining < 0 ? 'bg-red-500' : 'bg-transparent'}`}></div>
-                                   <div className="absolute top-2 right-2 flex gap-1">
-                                      {ledger.excludeFromAsset && <div className="text-gray-400 bg-gray-100 p-1 rounded-full"><EyeOff size={12} fill="none" /></div>}
-                                      {ledger.isPinned && <div className="text-blue-500 bg-blue-50 p-1 rounded-full"><Pin size={12} fill="currentColor" /></div>}
-                                      {isBettingLedger(ledger) && <div className="text-purple-500 bg-purple-50 p-1 rounded-full"><Target size={12} /></div>}
-                                   </div>
-                                  <div className="flex justify-between items-center mb-3">
-                                    <div className="flex items-center gap-3">
-                                      <div className="w-10 h-10 rounded-full flex items-center justify-center text-white shadow-sm" style={{ backgroundColor: ledger.color }}><Wallet size={20} /></div>
-                                      <div>
-                                          <h3 className="font-bold text-gray-800">{ledger.name}</h3>
-                                          <p className="text-xs text-gray-400">
-                                              {isSavingsLedger(ledger) ? '资金池余额' : (isBettingLedger(ledger) ? '累计盈亏' : `${getPeriodLabel()}概况`)}
-                                          </p>
-                                      </div>
+                                <SwipeableLedgerItem 
+                                    key={ledger.id} 
+                                    onDelete={() => handleDeleteLedger(ledger.id)}
+                                    onClick={() => openLedger(ledger.id)}
+                                >
+                                    <div className="bg-white p-5 shadow-sm border border-gray-100 hover:shadow-md transition-all active:scale-[0.98] relative overflow-hidden rounded-2xl">
+                                        <div className={`absolute left-0 top-0 bottom-0 w-1 ${remaining < 0 ? 'bg-red-500' : 'bg-transparent'}`}></div>
+                                        <div className="absolute top-2 right-2 flex gap-1">
+                                            {ledger.excludeFromAsset && <div className="text-gray-400 bg-gray-100 p-1 rounded-full"><EyeOff size={12} fill="none" /></div>}
+                                            {ledger.isPinned && <div className="text-blue-500 bg-blue-50 p-1 rounded-full"><Pin size={12} fill="currentColor" /></div>}
+                                            {isBettingLedger(ledger) && <div className="text-purple-500 bg-purple-50 p-1 rounded-full"><Target size={12} /></div>}
+                                        </div>
+                                        <div className="flex justify-between items-center mb-3">
+                                            <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-white shadow-sm" style={{ backgroundColor: ledger.color }}><Wallet size={20} /></div>
+                                            <div>
+                                                <h3 className="font-bold text-gray-800">{ledger.name}</h3>
+                                                <p className="text-xs text-gray-400">
+                                                    {isSavingsLedger(ledger) ? '资金池余额' : (isBettingLedger(ledger) ? '累计盈亏' : `${getPeriodLabel()}概况`)}
+                                                </p>
+                                            </div>
+                                            </div>
+                                            <div className="text-right mr-4">
+                                                <p className="text-xs text-gray-400">
+                                                    {isSavingsLedger(ledger) ? '当前可用' : (isBettingLedger(ledger) ? '净盈余' : '剩余')}
+                                                </p>
+                                                <p className={`font-bold ${remaining < 0 ? 'text-red-500' : (isBettingLedger(ledger) && remaining > 0 ? 'text-green-600' : 'text-gray-800')}`}>
+                                                    {isBettingLedger(ledger) && remaining > 0 ? '+' : ''}{formatMoney(remaining)}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden flex"><div className={`h-full rounded-full transition-all duration-500 ${remaining < 0 ? 'bg-red-500' : ''}`} style={{ width: `${percent}%`, backgroundColor: remaining < 0 ? undefined : ledger.color }}/></div>
+                                        {remaining < 0 && <span className="text-[10px] text-red-500 mt-1 block text-right">已超支 {formatMoney(Math.abs(remaining))}</span>}
                                     </div>
-                                    <div className="text-right mr-4">
-                                        <p className="text-xs text-gray-400">
-                                            {isSavingsLedger(ledger) ? '当前可用' : (isBettingLedger(ledger) ? '净盈余' : '剩余')}
-                                        </p>
-                                        <p className={`font-bold ${remaining < 0 ? 'text-red-500' : (isBettingLedger(ledger) && remaining > 0 ? 'text-green-600' : 'text-gray-800')}`}>
-                                            {isBettingLedger(ledger) && remaining > 0 ? '+' : ''}{formatMoney(remaining)}
-                                        </p>
-                                    </div>
-                                  </div>
-                                  <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden flex"><div className={`h-full rounded-full transition-all duration-500 ${remaining < 0 ? 'bg-red-500' : ''}`} style={{ width: `${percent}%`, backgroundColor: remaining < 0 ? undefined : ledger.color }}/></div>
-                                  {remaining < 0 && <span className="text-[10px] text-red-500 mt-1 block text-right">已超支 {formatMoney(Math.abs(remaining))}</span>}
-                                </div>
+                                </SwipeableLedgerItem>
                               );
                             })}
                         </div>
@@ -570,7 +699,6 @@
                          </div>
                       </div>
                       <div className="px-4 -mt-8">
-                        {/* --- 修改 5: 胜率圆环图 (仅在竞猜账本显示) --- */}
                         {isBettingLedger(ledgers.find(l => l.id === activeLedgerId)) && activeLedgerStats.bettingStats && (
                             <div className="bg-white p-4 rounded-2xl shadow-md mb-6 relative overflow-hidden">
                                 <div className="flex justify-between items-center mb-2">
@@ -592,7 +720,7 @@
                                                     paddingAngle={5}
                                                 >
                                                     <Cell fill="#ef4444" /> {/* 赢：红色 */}
-                                                    <Cell fill="#10b981" /> {/* 输：绿色 (或反过来，这里按A股红涨绿跌习惯) */}
+                                                    <Cell fill="#10b981" /> {/* 输：绿色 */}
                                                 </Pie>
                                             </PieChart>
                                         </ResponsiveContainer>
@@ -739,6 +867,20 @@
                              <div><label className="text-xs text-gray-400 mb-2 block">主题颜色</label><div className="flex gap-2"><div className="relative w-8 h-8 rounded-full overflow-hidden shadow-sm border border-gray-100"><input type="color" value={editingLedger.color} onChange={(e) => setEditingLedger({...editingLedger, color: e.target.value})} className="absolute -top-4 -left-4 w-16 h-16 cursor-pointer"/></div></div></div>
                              <div className="flex items-center gap-2"><span className="text-sm text-gray-600">置顶</span><button onClick={() => setEditingLedger({...editingLedger, isPinned: !editingLedger.isPinned})} className={`w-10 h-6 rounded-full transition-colors relative ${editingLedger.isPinned ? 'bg-blue-500' : 'bg-gray-200'}`}><div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${editingLedger.isPinned ? 'translate-x-4' : ''}`} /></button></div>
                            </div>
+
+                           {/* --- 功能 2: 单个账本导入导出 --- */}
+                           {!editingLedger.isNew && (
+                                <div className="pt-2 border-t border-gray-50 grid grid-cols-2 gap-2">
+                                    <button onClick={handleExportSingleLedger} className="flex items-center justify-center gap-1 bg-blue-50 text-blue-600 text-xs py-2 rounded-lg font-bold hover:bg-blue-100">
+                                        <Download size={14}/> 导出此账本
+                                    </button>
+                                    <button onClick={() => singleLedgerFileInputRef.current.click()} className="flex items-center justify-center gap-1 bg-green-50 text-green-600 text-xs py-2 rounded-lg font-bold hover:bg-green-100">
+                                        <Upload size={14}/> 导入数据
+                                    </button>
+                                    <input type="file" accept=".json" ref={singleLedgerFileInputRef} className="hidden" onChange={handleImportSingleLedger} />
+                                </div>
+                           )}
+
                         </div>
                         <div className="p-4 bg-gray-50 flex gap-3">
                           {!editingLedger.isNew && (<button onClick={() => handleDeleteLedger(editingLedger.id)} className="p-3 bg-red-100 text-red-500 rounded-xl hover:bg-red-200 transition"><Trash2 size={20} /></button>)}
@@ -798,8 +940,8 @@
                     <div className="bg-white w-full max-w-xs p-6 rounded-2xl shadow-2xl">
                       <h3 className="text-lg font-bold mb-4 text-center">数据备份与恢复</h3>
                       <div className="space-y-3">
-                        <button onClick={exportData} className="w-full flex items-center justify-center gap-2 bg-blue-50 text-blue-600 py-3 rounded-xl font-medium hover:bg-blue-100 transition-colors"><Download size={18} /> 导出数据 (Backup)</button>
-                        <div className="relative"><input type="file" accept=".json" ref={fileInputRef} className="hidden" onChange={importData} /><button onClick={() => fileInputRef.current.click()} className="w-full flex items-center justify-center gap-2 bg-green-50 text-green-600 py-3 rounded-xl font-medium hover:bg-green-100 transition-colors"><Upload size={18} /> 导入数据 (Restore)</button></div>
+                        <button onClick={exportData} className="w-full flex items-center justify-center gap-2 bg-blue-50 text-blue-600 py-3 rounded-xl font-medium hover:bg-blue-100 transition-colors"><Download size={18} /> 导出所有数据 (Backup)</button>
+                        <div className="relative"><input type="file" accept=".json" ref={fileInputRef} className="hidden" onChange={importData} /><button onClick={() => fileInputRef.current.click()} className="w-full flex items-center justify-center gap-2 bg-green-50 text-green-600 py-3 rounded-xl font-medium hover:bg-green-100 transition-colors"><Upload size={18} /> 导入所有数据 (Restore)</button></div>
                       </div>
                       <button onClick={() => setShowDataModal(false)} className="mt-6 w-full py-2 text-gray-400 text-sm hover:text-gray-600">关闭</button>
                     </div>

@@ -101,9 +101,14 @@
 
         const PRESET_COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#ff6b6b', '#EC4899', '#8B5CF6', '#6366F1', '#14B8A6', '#84CC16', '#F59E0B'];
         const COLORS_EXPENSE = ['#FF8042', '#FFBB28', '#FF6B6B', '#D946EF', '#8B5CF6', '#EC4899', '#F59E0B'];
+        // --- 修改 1: 账本结构调整 ---
+        // l_flow: 专门用来计算“可用金额”的虚拟账本（逻辑控制器）
+        // l_deposit: 真实的“存款”账本，用来存放闲钱，不参与预算，里面的钱不属于“可用金额”
         const INITIAL_LEDGERS = [
-            { id: 'l1', name: '日常生活', budget: 5000, color: '#0088FE', isPinned: true, excludeFromAsset: false }, 
-            { id: 'l2', name: '旅行基金', budget: 8000, color: '#00C49F', isPinned: false, excludeFromAsset: false }, 
+            { id: 'l_flow', name: '可用金额', budget: 0, color: '#10B981', isPinned: true, excludeFromAsset: false, isFlow: true }, 
+            { id: 'l_deposit', name: '存款', budget: 0, color: '#F59E0B', isPinned: true, excludeFromAsset: false, isSavings: true }, 
+            { id: 'l1', name: '吃饭', budget: 400, color: '#0088FE', isPinned: false, excludeFromAsset: false }, 
+            { id: 'l2', name: '旅行', budget: 8000, color: '#00C49F', isPinned: false, excludeFromAsset: false }, 
             { id: 'l_bet', name: '竞猜', budget: 0, color: '#8B5CF6', isPinned: false, excludeFromAsset: true, isBetting: true } 
         ];
         const INITIAL_TRANSACTIONS = [];
@@ -120,14 +125,15 @@
         const formatFullDate = (isoString) => { const date = new Date(isoString); return `${date.getMonth() + 1}月${date.getDate()}日`; };
         const getWeekRange = (date = new Date()) => { const current = new Date(date); current.setHours(0, 0, 0, 0); const day = current.getDay(); const diff = current.getDate() - day + (day === 0 ? -6 : 1); const start = new Date(current); start.setDate(diff); start.setHours(0, 0, 0, 0); const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23, 59, 59, 999); return { start, end }; };
         const getMonthRange = (date = new Date()) => { const start = new Date(date.getFullYear(), date.getMonth(), 1); const end = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999); return { start, end }; };
-        const isSavingsLedger = (ledger) => { return ledger && (ledger.name.includes('存款') || ledger.name.includes('储蓄') || ledger.name.includes('备用') || ledger.name === '资金池'); };
+        // --- 辅助函数识别账本类型 ---
+        const isFlowLedger = (ledger) => { return ledger && (ledger.isFlow || ledger.name === '可用金额'); };
         const isBettingLedger = (ledger) => { return ledger && (ledger.isBetting || ledger.name === '竞猜'); };
+        const isSavingsLedger = (ledger) => { return ledger && (ledger.isSavings || ledger.name === '存款'); };
         
         const isDateInPeriod = (dateStr, periodType) => { const date = new Date(dateStr); const now = new Date(); if (periodType === 'week') { const { start, end } = getWeekRange(now); return date >= start && date <= end; } else if (periodType === 'month') { return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear(); } else if (periodType === 'year') { return date.getFullYear() === now.getFullYear(); } else { return true; } };
         const getDaysInCurrentMonth = () => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(); };
         const CustomLabel = ({ viewBox, total, label, subLabel }) => { const { cx, cy } = viewBox; return (<text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"><tspan x={cx} y={cy - 10} dy="-0.5em" fontSize="10" fill="#888">{label}</tspan><tspan x={cx} y={cy + 10} dy="0.5em" fontSize="14" fontWeight="bold" fill="#333">{subLabel || formatMoney(total)}</tspan></text>); };
 
-        // --- 功能 1: 右滑删除组件 ---
         const SwipeableLedgerItem = ({ children, onDelete, onClick }) => {
             const [startX, setStartX] = useState(0);
             const [currentX, setCurrentX] = useState(0);
@@ -143,26 +149,21 @@
                 if (!isDragging) return;
                 const touchX = e.touches[0].clientX;
                 const diff = touchX - startX;
-                // 只允许向右滑 (diff > 0)
                 if (diff > 0) {
-                    // 限制最大滑动距离为 150px
                     setCurrentX(Math.min(diff, 150));
                 }
             };
 
             const onTouchEnd = () => {
                 setIsDragging(false);
-                // 如果滑动超过 100px，触发删除
                 if (currentX > 100) {
                     onDelete();
-                    setCurrentX(0); // 立即归位，或者可以做一个动画让它消失
+                    setCurrentX(0); 
                 } else {
-                    // 否则回弹
                     setCurrentX(0);
                 }
             };
 
-            // 处理点击：如果正在滑动，不触发点击
             const handleClick = (e) => {
                 if (currentX === 0) {
                     onClick();
@@ -171,7 +172,6 @@
 
             return (
                 <div className="relative mb-4 group select-none">
-                    {/* 背景层 (显示删除图标) */}
                     <div className="absolute inset-y-0 left-0 w-full bg-red-500 rounded-2xl flex items-center pl-6 z-0">
                         <div className="flex items-center text-white gap-2">
                             <Trash2 size={24} />
@@ -179,7 +179,6 @@
                         </div>
                     </div>
                     
-                    {/* 前景层 (账本卡片) */}
                     <div 
                         ref={itemRef}
                         className="relative z-10 bg-white transition-transform duration-200 ease-out rounded-2xl"
@@ -237,7 +236,7 @@
           const [editingLedger, setEditingLedger] = useState(null);
           const [editingTx, setEditingTx] = useState(null);
           const fileInputRef = useRef(null);
-          const singleLedgerFileInputRef = useRef(null); // --- 功能 2: 单账本导入引用 ---
+          const singleLedgerFileInputRef = useRef(null);
           const [editAssetValue, setEditAssetValue] = useState('');
 
           const budgetScaleFactor = useMemo(() => { if (period === 'week') return 7 / getDaysInCurrentMonth(); if (period === 'month') return 1; if (period === 'year') return 12; return 1; }, [period]);
@@ -255,21 +254,54 @@
               return total;
           }, [transactions, initialBalance, ledgers]);
 
-          const savingsBalance = useMemo(() => {
-              const otherLedgers = ledgers.filter(l => !isSavingsLedger(l) && !isBettingLedger(l)); 
-              const totalReservedForOthers = otherLedgers.reduce((sum, l) => {
-                  const budget = l.budget * budgetScaleFactor;
+          // --- 修改 2: 严格符合用户逻辑的可用金额计算 ---
+          const availableFlowBalance = useMemo(() => {
+              // 1. 基础：实际总资产
+              let available = realTotalAsset; 
+
+              ledgers.forEach(l => {
+                  if (isFlowLedger(l)) return; // 排除自己
+
+                  // 获取该账本当前周期的收支
                   const txs = transactions.filter(t => t.ledgerId === l.id && isDateInPeriod(t.date, period));
                   const expense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + t.amount, 0);
                   const income = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
-                  const remaining = (budget + income) - expense;
-                  return sum + (remaining > 0 ? remaining : 0);
-              }, 0);
-              return realTotalAsset - totalReservedForOthers;
+                  const budget = l.budget * budgetScaleFactor;
+
+                  if (l.excludeFromAsset) {
+                      // 1. 信用/不计入资产账本 (如花呗)
+                      // 逻辑：虽然没扣余额，但钱已经花了，是负债。
+                      // 减去 (支出 - 收入)，即净负债。
+                      const debt = expense - income;
+                      if (debt > 0) available -= debt;
+                  } else if (isSavingsLedger(l)) {
+                       // 2. 存款账本
+                       // 逻辑：存进去的钱就不是“可用金额”了。
+                       // 减去 (存款账本的当前余额)。
+                       // 注意：存款账本的余额 = 总收入(存入) - 总支出(取出)
+                       const savingsBalance = income - expense;
+                       if (savingsBalance > 0) available -= savingsBalance;
+                  } else {
+                      // 3. 普通预算账本 (如吃饭)
+                      // 逻辑：减去【全额预算】。
+                      // 用户观点：预算拨出去就是花了，不能动。
+                      // 公式：Available = RealTotalAsset - FullBudget
+                      // 注意：RealTotalAsset 已经减去了实际发生的支出。
+                      // 如果这里再减去 FullBudget，数学上会导致“实际支出”被扣了两次（一次在Asset里，一次在Budget里）。
+                      // 但这正是用户想要的逻辑：花钱会让总资产变少，进而让可用余额变少。
+                      // 例如：资产1000，预算400。初始可用600。
+                      // 花了10块。资产990。可用 = 990 - 400 = 590。
+                      // 意味着花掉预算内的钱，也会导致可用余额减少。这是一种极度保守的算法。
+                      if (budget > 0) {
+                          available -= budget;
+                      }
+                  }
+              });
+              return available;
           }, [realTotalAsset, ledgers, transactions, period, budgetScaleFactor]);
 
           const dashboardStats = useMemo(() => { const income = currentPeriodTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0); const expense = currentPeriodTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0); const ledgerExpenseMap = {}; currentPeriodTransactions.filter(t => t.type === 'expense').forEach(t => { const ledgerName = ledgers.find(l => l.id === t.ledgerId)?.name || '未知账本'; ledgerExpenseMap[ledgerName] = (ledgerExpenseMap[ledgerName] || 0) + t.amount; }); const categoryData = Object.entries(ledgerExpenseMap).map(([name, value]) => ({ name, value })); return { income, expense, categoryData, totalBalance: income - expense }; }, [currentPeriodTransactions, ledgers]);
-          const budgetStats = useMemo(() => { const normalLedgers = ledgers.filter(l => !isSavingsLedger(l) && !isBettingLedger(l)); const ledgerBudgetData = normalLedgers.map(l => ({ id: l.id, name: l.name, value: l.budget * budgetScaleFactor, color: l.color })); const totalBudget = normalLedgers.reduce((sum, l) => sum + (l.budget * budgetScaleFactor), 0); return { totalBudget, ledgerBudgetData }; }, [ledgers, budgetScaleFactor]);
+          const budgetStats = useMemo(() => { const normalLedgers = ledgers.filter(l => !isFlowLedger(l) && !isBettingLedger(l) && !isSavingsLedger(l)); const ledgerBudgetData = normalLedgers.map(l => ({ id: l.id, name: l.name, value: l.budget * budgetScaleFactor, color: l.color })); const totalBudget = normalLedgers.reduce((sum, l) => sum + (l.budget * budgetScaleFactor), 0); return { totalBudget, ledgerBudgetData }; }, [ledgers, budgetScaleFactor]);
           
           const activeLedgerStats = useMemo(() => { 
               if (!activeLedgerId) return null; 
@@ -284,9 +316,9 @@
               let remaining = 0;
               let bettingStats = null;
 
-              if (isSavingsLedger(currentLedger)) {
-                  remaining = savingsBalance;
-                  periodBudget = savingsBalance; 
+              if (isFlowLedger(currentLedger)) {
+                  remaining = availableFlowBalance;
+                  periodBudget = availableFlowBalance; 
               } else if (isBettingLedger(currentLedger)) {
                   const allIncome = allTimeTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
                   const allExpense = allTimeTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
@@ -298,6 +330,10 @@
                   const totalCount = winCount + lossCount;
                   const winRate = totalCount > 0 ? Math.round((winCount / totalCount) * 100) : 0;
                   bettingStats = { winCount, lossCount, winRate };
+              } else if (isSavingsLedger(currentLedger)) {
+                  // 存款账本：剩余 = 余额 (不考虑预算)
+                  remaining = income - expense;
+                  periodBudget = 0;
               } else {
                   periodBudget = currentLedger ? currentLedger.budget * budgetScaleFactor : 0; 
                   remaining = (periodBudget + income) - expense; 
@@ -343,7 +379,7 @@
                   }); 
               }
               return { transactions: allTimeTxs, periodTransactions: periodLedgerTxs, expense, income, periodBudget, remaining, chartData, bettingStats }; 
-          }, [activeLedgerId, transactions, period, ledgers, budgetScaleFactor, savingsBalance]);
+          }, [activeLedgerId, transactions, period, ledgers, budgetScaleFactor, availableFlowBalance]);
 
           const reportData = useMemo(() => { 
               const totalIncome = currentPeriodTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0); 
@@ -412,6 +448,7 @@
               const finalBudget = parseFloat(editingLedger.budget) / scale; 
               
               const isBetting = editingLedger.name.includes('竞猜') || editingLedger.isBetting;
+              const isSavings = editingLedger.name.includes('存款') || editingLedger.isSavings;
               
               const newLedgerObj = { 
                   id: editingLedger.id, 
@@ -420,7 +457,9 @@
                   budget: finalBudget, 
                   isPinned: editingLedger.isPinned,
                   excludeFromAsset: editingLedger.excludeFromAsset,
-                  isBetting: isBetting
+                  isBetting: isBetting,
+                  isFlow: editingLedger.isFlow,
+                  isSavings: isSavings
               }; 
               if (editingLedger.isNew) setLedgers([...ledgers, newLedgerObj]); 
               else setLedgers(ledgers.map(l => l.id === newLedgerObj.id ? newLedgerObj : l)); 
@@ -431,7 +470,6 @@
           const exportData = () => { const dataStr = JSON.stringify({ ledgers, transactions, totalExpectedIncome, initialBalance }); const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr); const linkElement = document.createElement('a'); linkElement.setAttribute('href', dataUri); linkElement.setAttribute('download', `account_data_${new Date().toLocaleDateString()}.json`); linkElement.click(); };
           const importData = (event) => { const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (e) => { try { const parsed = JSON.parse(e.target.result); if (parsed.ledgers && parsed.transactions) { setLedgers(parsed.ledgers); setTransactions(parsed.transactions); if (parsed.totalExpectedIncome) setTotalExpectedIncome(parsed.totalExpectedIncome); if(parsed.initialBalance || parsed.manualTotalAsset) setInitialBalance(parsed.initialBalance || parsed.manualTotalAsset); alert('数据导入成功！'); setShowDataModal(false); } } catch (err) { alert('解析文件失败'); } }; reader.readAsText(file); };
 
-          // --- 功能 2: 导出单个账本逻辑 ---
           const handleExportSingleLedger = () => {
               if (!editingLedger) return;
               const targetLedger = ledgers.find(l => l.id === editingLedger.id) || editingLedger;
@@ -451,7 +489,6 @@
               linkElement.click();
           };
 
-          // --- 功能 2: 导入单个账本逻辑 ---
           const handleImportSingleLedger = (event) => {
               const file = event.target.files[0];
               if (!file) return;
@@ -462,7 +499,6 @@
                       if (parsed.type === 'single_ledger_backup' && parsed.ledger && parsed.transactions) {
                           if (!confirm(`确定要导入账本 "${parsed.ledger.name}" 吗？\n这将覆盖当前账本的设置，并合并交易记录。`)) return;
 
-                          // 1. 更新或添加账本定义
                           const newLedgerDef = parsed.ledger;
                           const ledgerExists = ledgers.find(l => l.id === newLedgerDef.id);
                           if (ledgerExists) {
@@ -471,8 +507,6 @@
                               setLedgers(prev => [...prev, newLedgerDef]);
                           }
 
-                          // 2. 处理交易记录 (先删除该账本下的旧记录，再添加新记录，避免ID冲突也可以选择保留)
-                          // 策略：覆盖模式。删除当前账本ID下的所有记录，写入导入的记录。
                           setTransactions(prev => {
                               const otherTxs = prev.filter(t => t.ledgerId !== newLedgerDef.id);
                               return [...otherTxs, ...parsed.transactions];
@@ -608,20 +642,29 @@
                       <div className="px-6">
                         <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800">我的账本</h2><button onClick={initNewLedger} className="flex items-center text-blue-600 bg-blue-50 px-3 py-1.5 rounded-full text-xs font-bold hover:bg-blue-100 transition-colors"><Plus size={14} className="mr-1"/> 新建</button></div>
                         <div className="mb-4 relative"><input type="text" placeholder="搜索账本..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-white border border-gray-200 rounded-xl py-2 pl-10 pr-4 text-sm focus:outline-blue-500 shadow-sm"/><Search size={16} className="absolute left-3 top-2.5 text-gray-400" /></div>
-                        <div className="grid gap-1"> {/* 减小了gap以适应右滑组件的margin */}
+                        <div className="grid gap-1"> 
                           {sortedAndFilteredLedgers.length === 0 ? <div className="text-center text-gray-400 py-8 text-sm">没有找到匹配的账本</div> : sortedAndFilteredLedgers.map(ledger => {
                               let remaining = 0;
                               let percent = 0;
                               
-                              if (isSavingsLedger(ledger)) {
-                                  remaining = savingsBalance;
+                              if (isFlowLedger(ledger)) {
+                                  // 可用金额账本
+                                  remaining = availableFlowBalance;
                                   percent = 100;
                               } else if (isBettingLedger(ledger)) {
+                                  // 竞猜
                                   const allTimeIncome = transactions.filter(t => t.ledgerId === ledger.id && t.type === 'income').reduce((acc, curr) => acc + curr.amount, 0);
                                   const allTimeExpense = transactions.filter(t => t.ledgerId === ledger.id && t.type === 'expense').reduce((acc, curr) => acc + curr.amount, 0);
                                   remaining = allTimeIncome - allTimeExpense;
                                   percent = 100; 
+                              } else if (isSavingsLedger(ledger)) {
+                                  // 存款账本: 余额 = 存入 - 取出
+                                  const lIncome = transactions.filter(t => t.ledgerId === ledger.id && t.type === 'income').reduce((acc, curr) => acc + curr.amount, 0);
+                                  const lExpense = transactions.filter(t => t.ledgerId === ledger.id && t.type === 'expense').reduce((acc, curr) => acc + curr.amount, 0);
+                                  remaining = lIncome - lExpense;
+                                  percent = 100;
                               } else {
+                                  // 普通账本: 剩余预算
                                   const periodBudget = ledger.budget * budgetScaleFactor;
                                   const periodExpense = transactions.filter(t => t.ledgerId === ledger.id && t.type === 'expense' && isDateInPeriod(t.date, period)).reduce((acc, curr) => acc + curr.amount, 0);
                                   const periodIncome = transactions.filter(t => t.ledgerId === ledger.id && t.type === 'income' && isDateInPeriod(t.date, period)).reduce((acc, curr) => acc + curr.amount, 0);
@@ -630,7 +673,6 @@
                                   percent = Math.min((periodExpense / (totalAvailable || 1)) * 100, 100);
                               }
 
-                              // --- 修改：使用 SwipeableLedgerItem 包裹 ---
                               return (
                                 <SwipeableLedgerItem 
                                     key={ledger.id} 
@@ -643,6 +685,7 @@
                                             {ledger.excludeFromAsset && <div className="text-gray-400 bg-gray-100 p-1 rounded-full"><EyeOff size={12} fill="none" /></div>}
                                             {ledger.isPinned && <div className="text-blue-500 bg-blue-50 p-1 rounded-full"><Pin size={12} fill="currentColor" /></div>}
                                             {isBettingLedger(ledger) && <div className="text-purple-500 bg-purple-50 p-1 rounded-full"><Target size={12} /></div>}
+                                            {isSavingsLedger(ledger) && <div className="text-orange-500 bg-orange-50 p-1 rounded-full"><Wallet size={12} /></div>}
                                         </div>
                                         <div className="flex justify-between items-center mb-3">
                                             <div className="flex items-center gap-3">
@@ -650,13 +693,13 @@
                                             <div>
                                                 <h3 className="font-bold text-gray-800">{ledger.name}</h3>
                                                 <p className="text-xs text-gray-400">
-                                                    {isSavingsLedger(ledger) ? '资金池余额' : (isBettingLedger(ledger) ? '累计盈亏' : `${getPeriodLabel()}概况`)}
+                                                    {isFlowLedger(ledger) ? '自由支配余额' : (isBettingLedger(ledger) ? '累计盈亏' : (isSavingsLedger(ledger) ? '存钱罐余额' : `${getPeriodLabel()}概况`))}
                                                 </p>
                                             </div>
                                             </div>
                                             <div className="text-right mr-4">
                                                 <p className="text-xs text-gray-400">
-                                                    {isSavingsLedger(ledger) ? '当前可用' : (isBettingLedger(ledger) ? '净盈余' : '剩余')}
+                                                    {isFlowLedger(ledger) ? '当前可用' : (isBettingLedger(ledger) ? '净盈余' : (isSavingsLedger(ledger) ? '当前余额' : '剩余'))}
                                                 </p>
                                                 <p className={`font-bold ${remaining < 0 ? 'text-red-500' : (isBettingLedger(ledger) && remaining > 0 ? 'text-green-600' : 'text-gray-800')}`}>
                                                     {isBettingLedger(ledger) && remaining > 0 ? '+' : ''}{formatMoney(remaining)}
@@ -690,10 +733,10 @@
                              <button onClick={() => initEditLedger(ledgers.find(l => l.id === activeLedgerId))} className="bg-white/20 p-2 rounded-full hover:bg-white/30 text-white transition backdrop-blur-sm"><Edit3 size={16} /></button>
                              <div className="bg-white/10 backdrop-blur-sm p-3 rounded-xl border border-white/20 text-right min-w-[120px]">
                                  <div className="text-xs opacity-80">
-                                     {isSavingsLedger(ledgers.find(l => l.id === activeLedgerId)) ? '资金池余额' : (isBettingLedger(ledgers.find(l => l.id === activeLedgerId)) ? '历史净盈余' : '预算剩余')}
+                                     {isFlowLedger(ledgers.find(l => l.id === activeLedgerId)) ? '自由支配余额' : (isBettingLedger(ledgers.find(l => l.id === activeLedgerId)) ? '历史净盈余' : (isSavingsLedger(ledgers.find(l => l.id === activeLedgerId)) ? '当前存款' : '预算剩余'))}
                                  </div>
                                  <div className={`text-xl font-bold ${activeLedgerStats.remaining < 0 ? 'text-red-200' : 'text-white'}`}>{formatMoney(activeLedgerStats.remaining)}</div>
-                                 {!isSavingsLedger(ledgers.find(l => l.id === activeLedgerId)) && !isBettingLedger(ledgers.find(l => l.id === activeLedgerId)) && <div className="text-[10px] opacity-60 mt-1">预算: {formatMoney(activeLedgerStats.periodBudget)}</div>}
+                                 {!isFlowLedger(ledgers.find(l => l.id === activeLedgerId)) && !isBettingLedger(ledgers.find(l => l.id === activeLedgerId)) && !isSavingsLedger(ledgers.find(l => l.id === activeLedgerId)) && <div className="text-[10px] opacity-60 mt-1">预算: {formatMoney(activeLedgerStats.periodBudget)}</div>}
                              </div>
                            </div>
                          </div>
@@ -719,8 +762,8 @@
                                                     dataKey="value"
                                                     paddingAngle={5}
                                                 >
-                                                    <Cell fill="#ef4444" /> {/* 赢：红色 */}
-                                                    <Cell fill="#10b981" /> {/* 输：绿色 */}
+                                                    <Cell fill="#ef4444" /> 
+                                                    <Cell fill="#10b981" /> 
                                                 </Pie>
                                             </PieChart>
                                         </ResponsiveContainer>
@@ -846,7 +889,7 @@
                         <div className="p-4 border-b border-gray-100 flex justify-between items-center"><h3 className="font-bold text-gray-800">{editingLedger.isNew ? '新建账本' : '编辑账本'}</h3><button onClick={() => setShowEditLedgerModal(false)}><X size={20} className="text-gray-400"/></button></div>
                         <div className="p-6 space-y-4">
                            <div><label className="text-xs text-gray-400 mb-1 block">账本名称</label><input type="text" value={editingLedger.name} onChange={(e) => setEditingLedger({...editingLedger, name: e.target.value})} className="w-full border-b border-gray-200 py-2 focus:outline-none focus:border-blue-500 font-bold text-gray-800" placeholder="请输入名称"/></div>
-                           {!isSavingsLedger(editingLedger) && !isBettingLedger(editingLedger) && (
+                           {!isFlowLedger(editingLedger) && !isBettingLedger(editingLedger) && !isSavingsLedger(editingLedger) && (
                                <div><label className="text-xs text-gray-400 mb-1 block">{getPeriodLabel()}预算 (¥)</label><input type="number" value={editingLedger.budget} onChange={(e) => setEditingLedger({...editingLedger, budget: e.target.value})} className="w-full border-b border-gray-200 py-2 focus:outline-none focus:border-blue-500 font-bold text-gray-800" placeholder="0"/></div>
                            )}
                            
@@ -868,7 +911,6 @@
                              <div className="flex items-center gap-2"><span className="text-sm text-gray-600">置顶</span><button onClick={() => setEditingLedger({...editingLedger, isPinned: !editingLedger.isPinned})} className={`w-10 h-6 rounded-full transition-colors relative ${editingLedger.isPinned ? 'bg-blue-500' : 'bg-gray-200'}`}><div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${editingLedger.isPinned ? 'translate-x-4' : ''}`} /></button></div>
                            </div>
 
-                           {/* --- 功能 2: 单个账本导入导出 --- */}
                            {!editingLedger.isNew && (
                                 <div className="pt-2 border-t border-gray-50 grid grid-cols-2 gap-2">
                                     <button onClick={handleExportSingleLedger} className="flex items-center justify-center gap-1 bg-blue-50 text-blue-600 text-xs py-2 rounded-lg font-bold hover:bg-blue-100">
@@ -899,7 +941,7 @@
                          <div className="w-full bg-blue-200 h-1.5 rounded-full mt-2 overflow-hidden"><div className={`h-full ${tempTotalIncome - tempAllocatedBudget < 0 ? 'bg-red-400' : 'bg-blue-500'}`} style={{ width: `${Math.min((tempAllocatedBudget / (tempTotalIncome || 1)) * 100, 100)}%` }}/></div>
                        </div>
                        <div className="flex-1 overflow-y-auto space-y-4 pr-1">
-                         {draftLedgers.filter(l => !isSavingsLedger(l) && !isBettingLedger(l)).map(l => (
+                         {draftLedgers.filter(l => !isFlowLedger(l) && !isBettingLedger(l) && !isSavingsLedger(l)).map(l => (
                            <div key={l.id} className="border border-gray-100 rounded-xl p-3 hover:shadow-sm transition-shadow flex items-center justify-between">
                              <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{backgroundColor: l.color}}></div><span className="text-sm font-bold text-gray-700">{l.name}</span></div>
                              <div className="flex items-center gap-1 bg-gray-50 px-2 py-1 rounded-lg"><span className="text-gray-400 text-xs">¥</span><input type="number" value={l.displayBudget || 0} onChange={(e) => updateDraftLedger(l.id, 'displayBudget', e.target.value)} className="w-20 bg-transparent text-right font-bold text-gray-800 focus:outline-none"/></div>

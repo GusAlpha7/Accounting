@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ledger-app-v19'; // 建议升级版本号以触发更新
+const CACHE_NAME = 'ledger-app-v20'; // 建议升级版本号以触发更新
 const ASSETS_TO_CACHE = [
   './',
   './index.html',

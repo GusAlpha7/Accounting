@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>React 个人记账本</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#2563eb">
+    <link rel="apple-touch-icon" href="icon-192.png">
+
+    <script src="https://cdn.jsdelivr.net/npm/vconsole@3.15.0/dist/vconsole.min.js"></script>
+    <script> var vConsole = new VConsole(); </script>
+
+    <script>
+        window.onerror = function(msg, url, line, col, error) {
+            if (msg.includes('ResizeObserver')) return;
+            document.body.innerHTML = '<div style="padding:20px;color:red;font-size:16px;background:#fff;z-index:9999;position:relative;"><h3>💥 发生错误</h3><p>' + msg + '</p><p>Line: ' + line + '</p><button onclick="window.location.reload()" style="padding:10px 20px;background:#333;color:fff;border-radius:5px;">刷新重试</button></div>';
+        };
+    </script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>.no-scrollbar::-webkit-scrollbar{display:none}.no-scrollbar{-ms-overflow-style:none;scrollbar-width:none}body{-webkit-tap-highlight-color:transparent}</style>
+
+    <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/recharts@2.10.3/umd/Recharts.js"></script>
+</head>
+<body class="bg-gray-50 select-none">
+    <div id="root">
+        <div style="display:flex;justify-content:center;align-items:center;height:100vh;color:#999;flex-direction:column;">
+            <p>正在启动记账本...</p>
+            <p style="font-size:12px;margin-top:8px">首次加载可能需要几秒钟</p>
+        </div>
+    </div>
+
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(console.error));
+        }
+    </script>
+
+    <script type="text/babel">
+        // 依赖检查：确保 CDN 加载成功
+        if (typeof React === 'undefined' || typeof ReactDOM === 'undefined') {
+            document.body.innerHTML = "<div style='padding:20px;color:red'>核心库加载失败，请检查网络连接。</div>";
+            throw new Error("React Load Failed");
+        }
+        if (typeof Recharts === 'undefined') {
+            window.Recharts = { PieChart: () => null, Pie: () => null, Cell: () => null, ResponsiveContainer: ({children}) => <div>{children}</div>, Tooltip: () => null, BarChart: () => null, Bar: () => null, XAxis: () => null, YAxis: () => null, CartesianGrid: () => null, ReferenceLine: () => null };
+            console.error("Recharts failed to load");
+        }
+
+        const { useState, useEffect, useMemo, useRef } = React;
+        // 引入 ReferenceLine 用于绘制 0 轴线
+        const { PieChart, Pie, Cell, ResponsiveContainer, Tooltip: RechartsTooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, ReferenceLine } = Recharts;
+
+        // --- 图标组件 ---
+        const Icon = ({ children, size = 20, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{children}</svg>
+        );
+        const DefaultIcon = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/></Icon>;
+
+        const Icons = {
+            Plus: (p) => <Icon {...p}><path d="M5 12h14"/><path d="M12 5v14"/></Icon>,
+            Wallet: (p) => <Icon {...p}><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"/><path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/><path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h2v-4h-2z"/></Icon>,
+            ArrowLeft: (p) => <Icon {...p}><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></Icon>,
+            Upload: (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Icon>,
+            Download: (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></Icon>,
+            TrendingUp: (p) => <Icon {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></Icon>,
+            TrendingDown: (p) => <Icon {...p}><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></Icon>,
+            Settings: (p) => <Icon {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></Icon>,
+            X: (p) => <Icon {...p}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></Icon>,
+            Calendar: (p) => <Icon {...p}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></Icon>,
+            CreditCard: (p) => <Icon {...p}><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></Icon>,
+            Coffee: (p) => <Icon {...p}><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></Icon>,
+            Home: (p) => <Icon {...p}><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></Icon>,
+            ShoppingBag: (p) => <Icon {...p}><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></Icon>,
+            Car: (p) => <Icon {...p}><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/><path d="M14 17H9"/></Icon>,
+            Plane: (p) => <Icon {...p}><path d="M2 12h5"/><path d="M13 12h5"/><path d="M7 12 2 7h5l5 5h10l-5 5H7l-5-5z"/></Icon>,
+            Delete: (p) => <Icon {...p}><path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></Icon>,
+            Edit3: (p) => <Icon {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></Icon>,
+            FileText: (p) => <Icon {...p}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></Icon>,
+            ChevronDown: (p) => <Icon {...p}><polyline points="6 9 12 15 18 9"/></Icon>,
+            Search: (p) => <Icon {...p}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></Icon>,
+            Pin: (p) => <Icon {...p}><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></Icon>,
+            Palette: (p) => <Icon {...p}><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></Icon>,
+            Clock: (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></Icon>,
+            Trash2: (p) => <Icon {...p}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></Icon>,
+            Check: (p) => <Icon {...p}><polyline points="20 6 9 17 4 12"/></Icon>,
+            EyeOff: (p) => <Icon {...p}><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></Icon>
+        };
+
+        const { 
+            Plus = DefaultIcon, Wallet = DefaultIcon, ArrowLeft = DefaultIcon, Upload = DefaultIcon, Download = DefaultIcon, 
+            TrendingUp = DefaultIcon, TrendingDown = DefaultIcon, Settings = DefaultIcon, X = DefaultIcon, Calendar = DefaultIcon,
+            CreditCard = DefaultIcon, Coffee = DefaultIcon, Home = DefaultIcon, ShoppingBag = DefaultIcon, Car = DefaultIcon, Plane = DefaultIcon,
+            Delete = DefaultIcon, Edit3 = DefaultIcon, FileText = DefaultIcon, ChevronDown = DefaultIcon, Search = DefaultIcon, Pin = DefaultIcon, Palette = DefaultIcon, Clock = DefaultIcon,
+            Trash2 = DefaultIcon, Check = DefaultIcon, EyeOff = DefaultIcon
+        } = Icons;
+
+        const PRESET_COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#ff6b6b', '#EC4899', '#8B5CF6', '#6366F1', '#14B8A6', '#84CC16', '#F59E0B'];
+        const COLORS_EXPENSE = ['#FF8042', '#FFBB28', '#FF6B6B', '#D946EF', '#8B5CF6', '#EC4899', '#F59E0B'];
+        // 在 INITIAL_LEDGERS 中增加 excludeFromAsset 字段默认值 (如果有老用户数据，需要兼容)
+        const INITIAL_LEDGERS = [{ id: 'l1', name: '日常生活', budget: 5000, color: '#0088FE', isPinned: true, excludeFromAsset: false }, { id: 'l2', name: '旅行基金', budget: 8000, color: '#00C49F', isPinned: false, excludeFromAsset: false }, { id: 'l3', name: '装修备用', budget: 20000, color: '#FFBB28', isPinned: false, excludeFromAsset: false }];
+        const INITIAL_TRANSACTIONS = [];
+
+        const formatMoney = (amount) => {
+            return new Intl.NumberFormat('zh-CN', { 
+                style: 'currency', 
+                currency: 'CNY', 
+                minimumFractionDigits: 2, 
+                maximumFractionDigits: 2 
+            }).format(amount);
+        };
+
+        const formatFullDate = (isoString) => { const date = new Date(isoString); return `${date.getMonth() + 1}月${date.getDate()}日`; };
+        const getWeekRange = (date = new Date()) => { const current = new Date(date); current.setHours(0, 0, 0, 0); const day = current.getDay(); const diff = current.getDate() - day + (day === 0 ? -6 : 1); const start = new Date(current); start.setDate(diff); start.setHours(0, 0, 0, 0); const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23, 59, 59, 999); return { start, end }; };
+        const getMonthRange = (date = new Date()) => { const start = new Date(date.getFullYear(), date.getMonth(), 1); const end = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999); return { start, end }; };
+        const isSavingsLedger = (ledger) => { return ledger && (ledger.name.includes('存款') || ledger.name.includes('储蓄') || ledger.name.includes('备用') || ledger.name === '资金池'); };
+        const isDateInPeriod = (dateStr, periodType) => { const date = new Date(dateStr); const now = new Date(); if (periodType === 'week') { const { start, end } = getWeekRange(now); return date >= start && date <= end; } else if (periodType === 'month') { return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear(); } else if (periodType === 'year') { return date.getFullYear() === now.getFullYear(); } else { return true; } };
+        const getDaysInCurrentMonth = () => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(); };
+        const CustomLabel = ({ viewBox, total, label, subLabel }) => { const { cx, cy } = viewBox; return (<text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"><tspan x={cx} y={cy - 10} dy="-0.5em" fontSize="10" fill="#888">{label}</tspan><tspan x={cx} y={cy + 10} dy="0.5em" fontSize="14" fontWeight="bold" fill="#333">{subLabel || formatMoney(total)}</tspan></text>); };
+
+        function App() {
+          const [ledgers, setLedgers] = useState(() => {
+             try { const saved = localStorage.getItem('ledgers'); return saved ? JSON.parse(saved) : INITIAL_LEDGERS; } catch(e) { return INITIAL_LEDGERS; }
+          });
+          const [transactions, setTransactions] = useState(() => {
+             try { const saved = localStorage.getItem('transactions'); return saved ? JSON.parse(saved) : INITIAL_TRANSACTIONS; } catch(e) { return INITIAL_TRANSACTIONS; }
+          });
+          const [initialBalance, setInitialBalance] = useState(() => {
+             try { const saved = localStorage.getItem('initialBalance'); return saved ? parseFloat(saved) : 2270.76; } catch(e) { return 2270.76; }
+          });
+          const [totalExpectedIncome, setTotalExpectedIncome] = useState(() => {
+              try { const saved = localStorage.getItem('totalExpectedIncome'); return saved ? parseFloat(saved) : 35000; } catch(e) { return 35000; }
+          });
+
+          useEffect(() => { localStorage.setItem('ledgers', JSON.stringify(ledgers)); }, [ledgers]);
+          useEffect(() => { localStorage.setItem('transactions', JSON.stringify(transactions)); }, [transactions]);
+          useEffect(() => { localStorage.setItem('initialBalance', JSON.stringify(initialBalance)); }, [initialBalance]);
+          useEffect(() => { localStorage.setItem('totalExpectedIncome', JSON.stringify(totalExpectedIncome)); }, [totalExpectedIncome]);
+
+          const [view, setView] = useState('dashboard');
+          const [activeLedgerId, setActiveLedgerId] = useState(null);
+          const [showAddModal, setShowAddModal] = useState(false);
+          const [showDataModal, setShowDataModal] = useState(false);
+          const [showBudgetModal, setShowBudgetModal] = useState(false);
+          const [showReportModal, setShowReportModal] = useState(false);
+          const [showEditLedgerModal, setShowEditLedgerModal] = useState(false);
+          const [showAssetModal, setShowAssetModal] = useState(false); 
+          const [period, setPeriod] = useState('month'); 
+          const [addMode, setAddMode] = useState('full'); 
+          const [searchQuery, setSearchQuery] = useState('');
+          const [formType, setFormType] = useState('expense');
+          const [formAmount, setFormAmount] = useState('');
+          const formCategory = '一般';
+          const [formLedgerId, setFormLedgerId] = useState('');
+          const [formNote, setFormNote] = useState('');
+          const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0]);
+          const [draftLedgers, setDraftLedgers] = useState([]);
+          const [tempTotalIncome, setTempTotalIncome] = useState(0); 
+          const [editingLedger, setEditingLedger] = useState(null);
+          const [editingTx, setEditingTx] = useState(null);
+          const fileInputRef = useRef(null);
+          const [editAssetValue, setEditAssetValue] = useState('');
+
+          const budgetScaleFactor = useMemo(() => { if (period === 'week') return 7 / getDaysInCurrentMonth(); if (period === 'month') return 1; if (period === 'year') return 12; return 1; }, [period]);
+          const getPeriodLabel = () => period === 'week' ? '本周' : period === 'month' ? '本月' : period === 'year' ? '本年' : '全部';
+          const currentPeriodTransactions = useMemo(() => transactions.filter(t => isDateInPeriod(t.date, period)), [transactions, period]);
+          
+          // --- 功能 1 修改：总资产计算逻辑 ---
+          // 现在会检查交易所属的 ledger 是否被标记为 excludeFromAsset
+          const realTotalAsset = useMemo(() => {
+              let total = initialBalance;
+              transactions.forEach(t => {
+                  const ledger = ledgers.find(l => l.id === t.ledgerId);
+                  // 如果账本不存在或者被标记为不计入总资产，则跳过
+                  if (ledger && ledger.excludeFromAsset) return;
+
+                  if (t.type === 'income') total += t.amount;
+                  else total -= t.amount;
+              });
+              return total;
+          }, [transactions, initialBalance, ledgers]);
+
+          const savingsBalance = useMemo(() => {
+              const otherLedgers = ledgers.filter(l => !isSavingsLedger(l));
+              const totalReservedForOthers = otherLedgers.reduce((sum, l) => {
+                  const budget = l.budget * budgetScaleFactor;
+                  const txs = transactions.filter(t => t.ledgerId === l.id && isDateInPeriod(t.date, period));
+                  const expense = txs.filter(t => t.type === 'expense').reduce((acc, t) => acc + t.amount, 0);
+                  const income = txs.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
+                  const remaining = (budget + income) - expense;
+                  return sum + (remaining > 0 ? remaining : 0);
+              }, 0);
+              // 注意：这里 savingsBalance 依赖 realTotalAsset，所以它也会自动应用排除逻辑
+              return realTotalAsset - totalReservedForOthers;
+          }, [realTotalAsset, ledgers, transactions, period, budgetScaleFactor]);
+
+          const dashboardStats = useMemo(() => { const income = currentPeriodTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0); const expense = currentPeriodTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0); const ledgerExpenseMap = {}; currentPeriodTransactions.filter(t => t.type === 'expense').forEach(t => { const ledgerName = ledgers.find(l => l.id === t.ledgerId)?.name || '未知账本'; ledgerExpenseMap[ledgerName] = (ledgerExpenseMap[ledgerName] || 0) + t.amount; }); const categoryData = Object.entries(ledgerExpenseMap).map(([name, value]) => ({ name, value })); return { income, expense, categoryData, totalBalance: income - expense }; }, [currentPeriodTransactions, ledgers]);
+          const budgetStats = useMemo(() => { const normalLedgers = ledgers.filter(l => !isSavingsLedger(l)); const ledgerBudgetData = normalLedgers.map(l => ({ id: l.id, name: l.name, value: l.budget * budgetScaleFactor, color: l.color })); const totalBudget = normalLedgers.reduce((sum, l) => sum + (l.budget * budgetScaleFactor), 0); return { totalBudget, ledgerBudgetData }; }, [ledgers, budgetScaleFactor]);
+          
+          // --- 功能 2 修改：分账本趋势图逻辑 ---
+          const activeLedgerStats = useMemo(() => { 
+              if (!activeLedgerId) return null; 
+              const allLedgerTxs = transactions.filter(t => t.ledgerId === activeLedgerId).sort((a, b) => new Date(b.date) - new Date(a.date)); 
+              const periodLedgerTxs = allLedgerTxs.filter(t => isDateInPeriod(t.date, period)); 
+              const expense = periodLedgerTxs.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0); 
+              const income = periodLedgerTxs.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+              const currentLedger = ledgers.find(l => l.id === activeLedgerId); 
+              
+              let periodBudget = 0;
+              let remaining = 0;
+
+              if (isSavingsLedger(currentLedger)) {
+                  remaining = savingsBalance;
+                  periodBudget = savingsBalance; 
+              } else {
+                  periodBudget = currentLedger ? currentLedger.budget * budgetScaleFactor : 0; 
+                  remaining = (periodBudget + income) - expense; 
+              }
+              
+              // --- 趋势图逻辑变更：计算 (收入 - 支出) ---
+              let chartData = []; 
+              const processDataPoint = (txs) => {
+                  const dayExpense = txs.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+                  const dayIncome = txs.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+                  // 净值：收入 - 支出。
+                  // 如果是正数，代表盈余（绿色柱子）；如果是负数，代表亏损/纯消费（红色柱子）。
+                  return dayIncome - dayExpense;
+              }
+
+              const now = new Date(); 
+              if (period === 'week') { 
+                  const { start } = getWeekRange(now); 
+                  for (let i = 0; i < 7; i++) { 
+                      const d = new Date(start); d.setDate(start.getDate() + i); 
+                      const dayStr = d.toISOString().split('T')[0]; 
+                      const dayTxs = periodLedgerTxs.filter(t => t.date.startsWith(dayStr));
+                      chartData.push({ name: ['周一','周二','周三','周四','周五','周六','周日'][i], fullDate: formatFullDate(d.toISOString()), amount: processDataPoint(dayTxs) }); 
+                  } 
+              } else if (period === 'month') { 
+                  const { start, end } = getMonthRange(now); 
+                  const daysInMonth = end.getDate(); 
+                  for (let i = 1; i <= daysInMonth; i++) { 
+                      const d = new Date(now.getFullYear(), now.getMonth(), i); 
+                      if (d > now) break; 
+                      const dayStr = d.toISOString().split('T')[0]; 
+                      const dayTxs = periodLedgerTxs.filter(t => t.date.startsWith(dayStr));
+                      chartData.push({ name: `${now.getMonth() + 1}月${i}日`, fullDate: formatFullDate(d.toISOString()), amount: processDataPoint(dayTxs) }); 
+                  } 
+              } else if (period === 'year') { 
+                  for(let i=0; i<12; i++) { 
+                      const monthTxs = periodLedgerTxs.filter(t => new Date(t.date).getMonth() === i);
+                      chartData.push({ name: `${i+1}月`, amount: processDataPoint(monthTxs) }); 
+                  } 
+              } else { 
+                  const years = [...new Set(periodLedgerTxs.map(t => new Date(t.date).getFullYear()))].sort(); 
+                  if(years.length === 0) years.push(now.getFullYear()); 
+                  years.forEach(y => { 
+                      const yearTxs = periodLedgerTxs.filter(t => new Date(t.date).getFullYear() === y);
+                      chartData.push({ name: `${y}年`, amount: processDataPoint(yearTxs) }); 
+                  }); 
+              }
+              return { transactions: allLedgerTxs, periodTransactions: periodLedgerTxs, expense, income, periodBudget, remaining, chartData }; 
+          }, [activeLedgerId, transactions, period, ledgers, budgetScaleFactor, savingsBalance]);
+
+          const reportData = useMemo(() => { 
+              const totalIncome = currentPeriodTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0); 
+              const totalExpense = currentPeriodTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0); 
+              const totalBudget = budgetStats.totalBudget; 
+              const ledgerReports = ledgers.map(l => { 
+                  const lBudget = l.budget * budgetScaleFactor; 
+                  const lExpense = currentPeriodTransactions.filter(t => t.ledgerId === l.id && t.type === 'expense').reduce((sum, t) => sum + t.amount, 0); 
+                  const lIncome = currentPeriodTransactions.filter(t => t.ledgerId === l.id && t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+                  return { ...l, periodBudget: lBudget, periodExpense: lExpense, balance: (lBudget + lIncome) - lExpense }; 
+              }); 
+              return { totalIncome, totalExpense, totalBudget, ledgerReports }; 
+          }, [currentPeriodTransactions, budgetStats, ledgers, budgetScaleFactor]);
+
+          const sortedAndFilteredLedgers = useMemo(() => { let result = [...ledgers]; if (searchQuery) result = result.filter(l => l.name.toLowerCase().includes(searchQuery.toLowerCase())); result.sort((a, b) => (b.isPinned === true ? 1 : 0) - (a.isPinned === true ? 1 : 0)); return result; }, [ledgers, searchQuery]);
+
+          const handleSaveTransaction = () => {
+            if (!formAmount || !formLedgerId || !formDate) return;
+            const now = new Date();
+            const selectedDate = new Date(formDate);
+            selectedDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
+            if (editingTx) {
+                const updatedTx = { ...editingTx, amount: parseFloat(formAmount), type: formType, category: formCategory, ledgerId: formLedgerId, date: selectedDate.toISOString(), note: formNote };
+                setTransactions(transactions.map(t => t.id === editingTx.id ? updatedTx : t));
+            } else {
+                const newTx = { id: Date.now(), amount: parseFloat(formAmount), type: formType, category: formCategory, ledgerId: formLedgerId, date: selectedDate.toISOString(), note: formNote };
+                setTransactions([newTx, ...transactions]);
+            }
+            setShowAddModal(false);
+            resetForm();
+          };
+
+          const initEditTransaction = (tx) => {
+              setEditingTx(tx);
+              setFormAmount(tx.amount.toString());
+              setFormType(tx.type);
+              setFormLedgerId(tx.ledgerId);
+              setFormNote(tx.note);
+              setFormDate(tx.date.split('T')[0]);
+              setAddMode('full'); 
+              setShowAddModal(true);
+          };
+
+          const handleDeleteTx = () => {
+              if (confirm('确定要删除这条记录吗？')) {
+                  setTransactions(transactions.filter(t => t.id !== editingTx.id));
+                  setShowAddModal(false);
+                  resetForm();
+              }
+          }
+
+          const resetForm = () => { setFormAmount(''); setFormNote(''); setFormDate(new Date().toISOString().split('T')[0]); setEditingTx(null); if (view === 'dashboard' && ledgers.length > 0) setFormLedgerId(ledgers[0].id); };
+          const openLedger = (id) => { setActiveLedgerId(id); setView('ledger_detail'); setFormLedgerId(id); setFormAmount(''); setFormDate(new Date().toISOString().split('T')[0]); setAddMode('quick'); setShowAddModal(true); };
+          const openFullAddModal = () => { setFormLedgerId(ledgers[0]?.id || ''); setFormAmount(''); setFormDate(new Date().toISOString().split('T')[0]); setAddMode('full'); setShowAddModal(true); };
+          const initBudgetEdit = () => { const scale = budgetScaleFactor; const draft = ledgers.map(l => ({ ...l, displayBudget: parseFloat((l.budget * scale).toFixed(0)) })); setDraftLedgers(draft); setTempTotalIncome(parseFloat((totalExpectedIncome * scale).toFixed(0))); setShowBudgetModal(true); };
+          const handleSaveBudgets = () => { const scale = budgetScaleFactor; const finalLedgers = draftLedgers.map(l => { const { displayBudget, ...rest } = l; return { ...rest, budget: displayBudget / scale }; }); setLedgers(finalLedgers); setTotalExpectedIncome(tempTotalIncome / scale); setShowBudgetModal(false); };
+          const updateDraftLedger = (id, key, value) => { setDraftLedgers(prev => prev.map(l => l.id === id ? { ...l, [key]: value } : l)); };
+          const tempAllocatedBudget = useMemo(() => draftLedgers.reduce((sum, l) => sum + (parseFloat(l.displayBudget) || 0), 0), [draftLedgers]);
+          
+          // --- 新建账本初始化逻辑 ---
+          // 默认 excludeFromAsset 为 false
+          const initNewLedger = () => { setEditingLedger({ id: `l${Date.now()}`, name: '', color: PRESET_COLORS[Math.floor(Math.random() * PRESET_COLORS.length)], budget: 0, isPinned: false, excludeFromAsset: false, isNew: true }); setShowEditLedgerModal(true); };
+          const initEditLedger = (ledger) => { const scale = budgetScaleFactor; setEditingLedger({ ...ledger, budget: parseFloat((ledger.budget * scale).toFixed(0)), isNew: false }); setShowEditLedgerModal(true); };
+          
+          // --- 保存账本逻辑 ---
+          // 确保保存 excludeFromAsset 字段
+          const handleSaveSingleLedger = () => { 
+              if (!editingLedger.name) { alert("请输入账本名称"); return; } 
+              const scale = budgetScaleFactor; 
+              const finalBudget = parseFloat(editingLedger.budget) / scale; 
+              const newLedgerObj = { 
+                  id: editingLedger.id, 
+                  name: editingLedger.name, 
+                  color: editingLedger.color, 
+                  budget: finalBudget, 
+                  isPinned: editingLedger.isPinned,
+                  excludeFromAsset: editingLedger.excludeFromAsset // 保存配置
+              }; 
+              if (editingLedger.isNew) setLedgers([...ledgers, newLedgerObj]); 
+              else setLedgers(ledgers.map(l => l.id === newLedgerObj.id ? newLedgerObj : l)); 
+              setShowEditLedgerModal(false); 
+          };
+          
+          const handleDeleteLedger = (id) => { if (confirm('确定要删除这个账本及其所有记录吗？')) { setLedgers(ledgers.filter(l => l.id !== id)); setTransactions(transactions.filter(t => t.ledgerId !== id)); setShowEditLedgerModal(false); if (activeLedgerId === id) setView('dashboard'); } };
+          const exportData = () => { const dataStr = JSON.stringify({ ledgers, transactions, totalExpectedIncome, initialBalance }); const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr); const linkElement = document.createElement('a'); linkElement.setAttribute('href', dataUri); linkElement.setAttribute('download', `account_data_${new Date().toLocaleDateString()}.json`); linkElement.click(); };
+          const importData = (event) => { const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (e) => { try { const parsed = JSON.parse(e.target.result); if (parsed.ledgers && parsed.transactions) { setLedgers(parsed.ledgers); setTransactions(parsed.transactions); if (parsed.totalExpectedIncome) setTotalExpectedIncome(parsed.totalExpectedIncome); if(parsed.initialBalance || parsed.manualTotalAsset) setInitialBalance(parsed.initialBalance || parsed.manualTotalAsset); alert('数据导入成功！'); setShowDataModal(false); } } catch (err) { alert('解析文件失败'); } }; reader.readAsText(file); };
+
+          const renderAddModal = () => {
+            const handleNumPad = (val) => {
+              if (val === 'DEL') setFormAmount(prev => prev.slice(0, -1));
+              else if (val === 'OK') handleSaveTransaction();
+              else if (val === '.') { if (!formAmount.includes('.')) setFormAmount(prev => prev + '.'); }
+              else { if (formAmount.length < 9) setFormAmount(prev => prev + val); }
+            };
+            return (
+              <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm transition-opacity">
+                <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-2xl animate-in slide-in-from-bottom-10 overflow-hidden">
+                  <div className="flex justify-between items-center p-4 border-b border-gray-100">
+                      <h3 className="text-lg font-bold text-gray-800">{editingTx ? '编辑记录' : (addMode === 'quick' ? '快速记账' : '记一笔')}</h3>
+                      <button onClick={() => {setShowAddModal(false); resetForm();}} className="p-2 hover:bg-gray-100 rounded-full"><X size={24} className="text-gray-500" /></button>
+                  </div>
+                  <div className="px-6 py-4"><div className="flex bg-gray-100 p-1 rounded-lg"><button className={`flex-1 py-2 rounded-md text-sm font-medium transition-all ${formType === 'expense' ? 'bg-white shadow text-red-500' : 'text-gray-500'}`} onClick={() => setFormType('expense')}>支出</button><button className={`flex-1 py-2 rounded-md text-sm font-medium transition-all ${formType === 'income' ? 'bg-white shadow text-green-500' : 'text-gray-500'}`} onClick={() => setFormType('income')}>收入</button></div></div>
+                  <div className="px-6 pb-2"><div className="flex items-center gap-2 bg-gray-50 rounded-lg p-2 w-fit mx-auto sm:mx-0"><Calendar size={16} className="text-gray-400" /><span className="text-xs text-gray-400">日期</span><input type="date" value={formDate} onChange={(e) => setFormDate(e.target.value)} className="bg-transparent text-sm font-bold text-gray-700 focus:outline-none" /></div></div>
+                  {addMode === 'quick' ? (
+                    <div className="pb-6 px-2">
+                        <div className="px-4 mb-4 text-right"><div className="text-xs text-gray-400 mb-1">金额</div><div className="text-4xl font-bold text-gray-800 h-12 flex items-center justify-end"><span className="text-2xl mr-1">¥</span>{formAmount || '0.00'}</div></div>
+                        <div className="px-4 mb-4"><input type="text" value={formNote} onChange={(e) => setFormNote(e.target.value)} placeholder="添加备注..." className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm focus:outline-blue-500 text-center"/></div>
+                        <div className="grid grid-cols-4 gap-2 px-2">
+                          {[1, 2, 3, 'DEL', 4, 5, 6, 'OK', 7, 8, 9, '.', 0].map((key, idx) => {
+                            if (key === 'OK') return <button key={key} onClick={() => handleNumPad('OK')} className="bg-blue-600 active:bg-blue-700 text-white rounded-xl font-bold text-lg shadow-md row-span-3 flex items-center justify-center" style={{ gridColumn: '4', gridRow: '2 / 5' }}>{editingTx ? '保存' : '确认'}</button>;
+                            if (key === 'DEL') return <button key={key} onClick={() => handleNumPad('DEL')} className="bg-gray-100 active:bg-gray-200 text-gray-600 rounded-xl font-bold text-lg p-4 flex items-center justify-center"><Delete size={20} /></button>;
+                            return <button key={idx} onClick={() => handleNumPad(key.toString())} className={`bg-gray-50 active:bg-gray-200 text-gray-800 rounded-xl font-bold text-xl p-4 shadow-sm border border-gray-100 ${key === 0 ? 'col-span-2' : ''}`}>{key}</button>;
+                          })}
+                        </div>
+                    </div>
+                  ) : (
+                    <div className="px-6 pb-6">
+                      <div className="mb-6"><label className="text-xs text-gray-400 mb-1 block">金额</label><div className="flex items-baseline border-b-2 border-blue-500 pb-2"><span className="text-2xl font-bold text-gray-800 mr-2">¥</span><input type="number" value={formAmount} onChange={(e) => setFormAmount(e.target.value)} placeholder="0.00" className="w-full text-4xl font-bold text-gray-800 bg-transparent focus:outline-none" autoFocus /></div></div>
+                      <div className="grid grid-cols-1 gap-4 mb-6">
+                        <div><label className="text-xs text-gray-400 mb-1 block">选择账本</label><select value={formLedgerId} onChange={(e) => setFormLedgerId(e.target.value)} className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-base focus:outline-blue-500"><option value="" disabled>选择账本</option>{ledgers.map(l => (<option key={l.id} value={l.id}>{l.name}</option>))}</select></div>
+                        <div><label className="text-xs text-gray-400 mb-1 block">备注</label><input type="text" value={formNote} onChange={(e) => setFormNote(e.target.value)} placeholder="添加备注..." className="w-full bg-gray-50 border border-gray-200 rounded-lg p-3 text-base focus:outline-blue-500" /></div>
+                      </div>
+                      <div className="flex gap-3">
+                          {editingTx && <button onClick={handleDeleteTx} className="p-3 bg-red-100 text-red-500 rounded-xl hover:bg-red-200 transition"><Trash2 size={24} /></button>}
+                          <button onClick={handleSaveTransaction} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3.5 rounded-xl font-bold shadow-lg shadow-blue-200 transition-all active:scale-95">{editingTx ? '保存修改' : '确认记账'}</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          };
+
+          return (
+            <div className="min-h-screen bg-gray-50 text-gray-900 font-sans selection:bg-blue-100">
+              <div className="max-w-md mx-auto bg-white min-h-screen shadow-2xl relative flex flex-col">
+                <header className="px-6 py-4 flex justify-between items-center bg-white sticky top-0 z-50 border-b border-gray-100 backdrop-blur-md bg-white/80">
+                  {view === 'dashboard' ? (
+                    <div className="flex flex-col cursor-pointer active:opacity-50 transition-opacity" 
+                         onClick={() => {
+                             setEditAssetValue(realTotalAsset); 
+                             setShowAssetModal(true);
+                         }}>
+                      <span className="text-xs text-gray-400 font-medium flex items-center">总资产 <Edit3 size={12} className="ml-1 opacity-50"/></span>
+                      <span className="text-2xl font-extrabold text-gray-800">{formatMoney(realTotalAsset)}</span>
+                    </div>
+                  ) : (
+                    <button onClick={() => { setView('dashboard'); setActiveLedgerId(null); setFormLedgerId(''); setSearchQuery(''); }} className="flex items-center text-gray-600 hover:text-blue-600 transition-colors"><ArrowLeft size={20} className="mr-1" /><span className="font-bold">返回</span></button>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <div className="flex bg-gray-100 rounded-lg p-1">
+                      {['week', 'month', 'year', 'all'].map(p => (
+                        <button key={p} onClick={() => setPeriod(p)} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${period === p ? 'bg-white shadow text-blue-600' : 'text-gray-400'}`}>
+                          {p === 'week' ? '周' : p === 'month' ? '月' : p === 'year' ? '年' : '总'}
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={() => setShowReportModal(true)} className="p-2 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100 transition-colors"><FileText size={20} /></button>
+                    <button onClick={() => setShowDataModal(true)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors"><Settings size={20} className="text-gray-600" /></button>
+                  </div>
+                </header>
+                <main className="flex-1 overflow-y-auto pb-24 scrollbar-hide no-scrollbar">
+                  {view === 'dashboard' && (
+                    <div className="space-y-6 animate-in fade-in duration-500">
+                      <div className="px-4 pt-4">
+                        <div className="flex gap-2 overflow-x-auto pb-4 snap-x no-scrollbar">
+                          <div className="min-w-[85%] sm:min-w-[300px] bg-white rounded-2xl shadow-sm border border-gray-100 p-4 snap-center relative overflow-hidden">
+                            <h3 className="text-sm font-bold text-gray-500 mb-2 flex items-center"><Calendar size={14} className="mr-1"/> {getPeriodLabel()}支出分布 (按账本)</h3>
+                            <div className="h-48 relative z-10">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                  <Pie data={dashboardStats.categoryData.length > 0 ? dashboardStats.categoryData : [{name: '无', value: 1}]} cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={5} dataKey="value">
+                                    {dashboardStats.categoryData.map((entry, index) => (<Cell key={`cell-${index}`} fill={ledgers.find(l => l.name === entry.name)?.color || COLORS_EXPENSE[index % COLORS_EXPENSE.length]} />))}
+                                    <CustomLabel label="总支出" total={dashboardStats.expense} />
+                                  </Pie>
+                                  <RechartsTooltip formatter={(value) => formatMoney(value)} />
+                                </PieChart>
+                              </ResponsiveContainer>
+                            </div>
+                            <div className="flex justify-between mt-2 text-xs text-gray-500 px-4"><span>收入: <span className="text-green-500">{formatMoney(dashboardStats.income)}</span></span><span>结余: <span className="font-bold">{formatMoney(dashboardStats.totalBalance)}</span></span></div>
+                          </div>
+                          <div className="min-w-[85%] sm:min-w-[300px] bg-white rounded-2xl shadow-sm border border-gray-100 p-4 snap-center relative">
+                            <div className="flex justify-between items-center mb-2">
+                              <h3 className="text-sm font-bold text-gray-500 flex items-center"><CreditCard size={14} className="mr-1"/> {getPeriodLabel()}预算</h3>
+                              <button onClick={initBudgetEdit} className="text-xs flex items-center text-blue-600 bg-blue-50 px-2 py-1 rounded-full border border-blue-100 hover:bg-blue-100 transition-colors"><Edit3 size={10} className="mr-1" /> 管理账本 & 预算</button>
+                            </div>
+                            <div className="h-48 relative">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                  <Pie data={budgetStats.ledgerBudgetData} cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={5} dataKey="value">
+                                    {budgetStats.ledgerBudgetData.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.color} />))}
+                                    <CustomLabel label="总预算" total={budgetStats.totalBudget} />
+                                  </Pie>
+                                  <RechartsTooltip formatter={(value) => formatMoney(value)} />
+                                </PieChart>
+                              </ResponsiveContainer>
+                            </div>
+                            <div className="text-center mt-2 text-xs text-gray-400">{period === 'week' ? '* 基于当月天数精准换算周预算' : '各账本预算分配'}</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="px-6">
+                        <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold text-gray-800">我的账本</h2><button onClick={initNewLedger} className="flex items-center text-blue-600 bg-blue-50 px-3 py-1.5 rounded-full text-xs font-bold hover:bg-blue-100 transition-colors"><Plus size={14} className="mr-1"/> 新建</button></div>
+                        <div className="mb-4 relative"><input type="text" placeholder="搜索账本..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-white border border-gray-200 rounded-xl py-2 pl-10 pr-4 text-sm focus:outline-blue-500 shadow-sm"/><Search size={16} className="absolute left-3 top-2.5 text-gray-400" /></div>
+                        <div className="grid gap-4">
+                          {sortedAndFilteredLedgers.length === 0 ? <div className="text-center text-gray-400 py-8 text-sm">没有找到匹配的账本</div> : sortedAndFilteredLedgers.map(ledger => {
+                              let remaining = 0;
+                              let percent = 0;
+                              
+                              if (isSavingsLedger(ledger)) {
+                                  remaining = savingsBalance;
+                                  percent = 100;
+                              } else {
+                                  const periodBudget = ledger.budget * budgetScaleFactor;
+                                  const periodExpense = transactions.filter(t => t.ledgerId === ledger.id && t.type === 'expense' && isDateInPeriod(t.date, period)).reduce((acc, curr) => acc + curr.amount, 0);
+                                  const periodIncome = transactions.filter(t => t.ledgerId === ledger.id && t.type === 'income' && isDateInPeriod(t.date, period)).reduce((acc, curr) => acc + curr.amount, 0);
+                                  const totalAvailable = periodBudget + periodIncome;
+                                  remaining = totalAvailable - periodExpense;
+                                  percent = Math.min((periodExpense / (totalAvailable || 1)) * 100, 100);
+                              }
+
+                              return (
+                                <div key={ledger.id} onClick={() => openLedger(ledger.id)} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer active:scale-[0.98] group relative overflow-hidden">
+                                   <div className={`absolute left-0 top-0 bottom-0 w-1 ${remaining < 0 ? 'bg-red-500' : 'bg-transparent'}`}></div>
+                                   <div className="absolute top-2 right-2 flex gap-1">
+                                      {/* UI: 显示是否被排除出总资产图标 */}
+                                      {ledger.excludeFromAsset && <div className="text-gray-400 bg-gray-100 p-1 rounded-full"><EyeOff size={12} fill="none" /></div>}
+                                      {ledger.isPinned && <div className="text-blue-500 bg-blue-50 p-1 rounded-full"><Pin size={12} fill="currentColor" /></div>}
+                                   </div>
+                                  <div className="flex justify-between items-center mb-3">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-10 h-10 rounded-full flex items-center justify-center text-white shadow-sm" style={{ backgroundColor: ledger.color }}><Wallet size={20} /></div>
+                                      <div>
+                                          <h3 className="font-bold text-gray-800">{ledger.name}</h3>
+                                          <p className="text-xs text-gray-400">
+                                              {isSavingsLedger(ledger) ? '资金池余额' : `${getPeriodLabel()}概况`}
+                                          </p>
+                                      </div>
+                                    </div>
+                                    <div className="text-right mr-4">
+                                        <p className="text-xs text-gray-400">
+                                            {isSavingsLedger(ledger) ? '当前可用' : '剩余'}
+                                        </p>
+                                        <p className={`font-bold ${remaining < 0 ? 'text-red-500' : 'text-gray-800'}`}>{formatMoney(remaining)}</p>
+                                    </div>
+                                  </div>
+                                  <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden flex"><div className={`h-full rounded-full transition-all duration-500 ${remaining < 0 ? 'bg-red-500' : ''}`} style={{ width: `${percent}%`, backgroundColor: remaining < 0 ? undefined : ledger.color }}/></div>
+                                  {remaining < 0 && <span className="text-[10px] text-red-500 mt-1 block text-right">已超支 {formatMoney(Math.abs(remaining))}</span>}
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {view === 'ledger_detail' && activeLedgerStats && (
+                    <div className="animate-in slide-in-from-right-10 duration-300">
+                      <div className="text-white p-6 pb-12 rounded-b-[2.5rem] shadow-lg mb-4 transition-colors duration-500" style={{ backgroundColor: ledgers.find(l => l.id === activeLedgerId)?.color || '#3B82F6' }}>
+                         <div className="flex justify-between items-start">
+                           <div>
+                               <h2 className="text-2xl font-bold mb-1">{ledgers.find(l => l.id === activeLedgerId)?.name}</h2>
+                               <p className="opacity-80 text-xs">{getPeriodLabel()}财务概览</p>
+                               {/* 详情页也提示用户该账本是否计入总资产 */}
+                               {ledgers.find(l => l.id === activeLedgerId)?.excludeFromAsset && (
+                                   <div className="mt-2 inline-flex items-center bg-black/20 px-2 py-1 rounded-full text-[10px] text-white/80">
+                                       <EyeOff size={10} className="mr-1"/> 不计入总资产
+                                   </div>
+                               )}
+                           </div>
+                           <div className="flex flex-col items-end gap-3">
+                             <button onClick={() => initEditLedger(ledgers.find(l => l.id === activeLedgerId))} className="bg-white/20 p-2 rounded-full hover:bg-white/30 text-white transition backdrop-blur-sm"><Edit3 size={16} /></button>
+                             <div className="bg-white/10 backdrop-blur-sm p-3 rounded-xl border border-white/20 text-right min-w-[120px]">
+                                 <div className="text-xs opacity-80">{isSavingsLedger(ledgers.find(l => l.id === activeLedgerId)) ? '资金池余额' : '预算剩余'}</div>
+                                 <div className={`text-xl font-bold ${activeLedgerStats.remaining < 0 ? 'text-red-200' : 'text-white'}`}>{formatMoney(activeLedgerStats.remaining)}</div>
+                                 {!isSavingsLedger(ledgers.find(l => l.id === activeLedgerId)) && <div className="text-[10px] opacity-60 mt-1">预算: {formatMoney(activeLedgerStats.periodBudget)}</div>}
+                             </div>
+                           </div>
+                         </div>
+                      </div>
+                      <div className="px-4 -mt-8">
+                        <div className="bg-white p-4 rounded-2xl shadow-md mb-6">
+                          <h3 className="text-sm font-bold text-gray-500 mb-4">{getPeriodLabel()} 净收益趋势 (收入-支出)</h3>
+                          <div className="h-40">
+                            <ResponsiveContainer width="100%" height="100%">
+                              {/* --- 功能 2 修改：图表展示净值 --- */}
+                              <BarChart data={activeLedgerStats.chartData}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                                <XAxis dataKey="name" axisLine={false} tickLine={false} fontSize={10} tick={{fill: '#9ca3af'}} interval={period === 'month' ? 4 : 0} />
+                                <RechartsTooltip 
+                                    cursor={{fill: '#f3f4f6'}} 
+                                    contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                                    formatter={(value) => [formatMoney(value), "净值"]}
+                                />
+                                <ReferenceLine y={0} stroke="#e5e7eb" />
+                                <Bar dataKey="amount" radius={[2, 2, 2, 2]}>
+                                  {
+                                    activeLedgerStats.chartData.map((entry, index) => (
+                                      <Cell key={`cell-${index}`} fill={entry.amount >= 0 ? '#10B981' : '#EF4444'} />
+                                    ))
+                                  }
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                        <div className="space-y-3 pb-20">
+                          <h3 className="text-sm font-bold text-gray-500 px-2">历史记录</h3>
+                          {activeLedgerStats.transactions.length === 0 ? <div className="text-center py-10 text-gray-400 text-sm">暂无记录，快去记一笔吧</div> : activeLedgerStats.transactions.map(t => (
+                              <div key={t.id} onClick={() => initEditTransaction(t)} className="bg-white p-4 rounded-xl shadow-sm border border-gray-50 flex items-center justify-between cursor-pointer active:bg-gray-50 transition-colors">
+                                <div className="flex items-center gap-3">
+                                  <div className={`p-2 rounded-full ${t.type === 'expense' ? 'bg-red-50 text-red-500' : 'bg-green-50 text-green-500'}`}>{t.type === 'expense' ? <TrendingDown size={18} /> : <TrendingUp size={18} />}</div>
+                                  <div><p className="font-bold text-gray-800 text-sm">{t.note || '无备注'}</p><p className="text-xs text-gray-400">{formatFullDate(t.date)}</p></div>
+                                </div>
+                                <span className={`font-bold ${t.type === 'expense' ? 'text-gray-800' : 'text-green-600'}`}>{t.type === 'expense' ? '-' : '+'}{formatMoney(t.amount)}</span>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </main>
+                <div className="fixed bottom-6 left-0 right-0 flex justify-center pointer-events-none z-40">
+                   <button 
+                     onClick={() => {
+                       if (view === 'ledger_detail' && activeLedgerId) {
+                         setFormLedgerId(activeLedgerId);
+                         setFormAmount('');
+                         setFormDate(new Date().toISOString().split('T')[0]);
+                         setAddMode('quick');
+                         setShowAddModal(true);
+                       } else {
+                         openFullAddModal();
+                       }
+                     }}
+                     className="bg-blue-600 hover:bg-blue-700 text-white rounded-full p-4 shadow-xl shadow-blue-300 transform transition-transform hover:scale-110 active:scale-95 pointer-events-auto flex items-center justify-center"
+                   >
+                     <Plus size={28} />
+                   </button>
+                </div>
+
+                {showAddModal && renderAddModal()}
+                
+                {showAssetModal && (
+                   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                     <div className="bg-white w-full max-w-xs p-6 rounded-2xl shadow-2xl animate-in zoom-in-95">
+                        <h3 className="text-lg font-bold mb-1 text-gray-800 text-center">校准当前余额</h3>
+                        <p className="text-xs text-gray-400 text-center mb-4">请输入当前银行卡/钱包的实际余额，APP会自动反推初始本金。</p>
+                        <div className="bg-gray-100 rounded-xl px-4 py-2 flex items-center mb-6">
+                            <span className="text-gray-500 font-bold mr-2">¥</span>
+                            <input 
+                                type="number" 
+                                value={editAssetValue} 
+                                onChange={(e) => setEditAssetValue(e.target.value)} 
+                                className="bg-transparent w-full text-xl font-bold text-gray-800 focus:outline-none" 
+                                autoFocus
+                            />
+                        </div>
+                        <div className="flex gap-3">
+                            <button onClick={() => setShowAssetModal(false)} className="flex-1 py-2 text-gray-500 bg-gray-100 rounded-xl font-bold">取消</button>
+                            <button 
+                                onClick={() => {
+                                    // --- 核心修复：倒推初始本金逻辑 ---
+                                    const targetBalance = parseFloat(editAssetValue) || 0;
+                                    // 仅统计【非exclude】账本的收支来倒推，保证逻辑一致性
+                                    let calculatedIncome = 0;
+                                    let calculatedExpense = 0;
+                                    
+                                    transactions.forEach(t => {
+                                        const l = ledgers.find(ledger => ledger.id === t.ledgerId);
+                                        if(l && l.excludeFromAsset) return;
+                                        if(t.type === 'income') calculatedIncome += t.amount;
+                                        if(t.type === 'expense') calculatedExpense += t.amount;
+                                    });
+
+                                    const calculatedInitial = targetBalance - calculatedIncome + calculatedExpense;
+                                    setInitialBalance(calculatedInitial);
+                                    setShowAssetModal(false);
+                                }} 
+                                className="flex-1 py-2 text-white bg-blue-600 rounded-xl font-bold shadow-lg shadow-blue-200"
+                            >
+                                校准
+                            </button>
+                        </div>
+                     </div>
+                   </div>
+                )}
+
+                {showEditLedgerModal && editingLedger && (
+                   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                     <div className="bg-white w-full max-w-xs rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95">
+                        <div className="p-4 border-b border-gray-100 flex justify-between items-center"><h3 className="font-bold text-gray-800">{editingLedger.isNew ? '新建账本' : '编辑账本'}</h3><button onClick={() => setShowEditLedgerModal(false)}><X size={20} className="text-gray-400"/></button></div>
+                        <div className="p-6 space-y-4">
+                           <div><label className="text-xs text-gray-400 mb-1 block">账本名称</label><input type="text" value={editingLedger.name} onChange={(e) => setEditingLedger({...editingLedger, name: e.target.value})} className="w-full border-b border-gray-200 py-2 focus:outline-none focus:border-blue-500 font-bold text-gray-800" placeholder="请输入名称"/></div>
+                           {!isSavingsLedger(editingLedger) && (
+                               <div><label className="text-xs text-gray-400 mb-1 block">{getPeriodLabel()}预算 (¥)</label><input type="number" value={editingLedger.budget} onChange={(e) => setEditingLedger({...editingLedger, budget: e.target.value})} className="w-full border-b border-gray-200 py-2 focus:outline-none focus:border-blue-500 font-bold text-gray-800" placeholder="0"/></div>
+                           )}
+                           
+                           {/* --- 功能 1 修改：添加不计入总资产开关 --- */}
+                           <div className="flex items-center justify-between py-2 border-t border-b border-gray-50">
+                                <div className="flex items-center gap-2">
+                                    <EyeOff size={16} className="text-gray-500"/>
+                                    <span className="text-sm font-bold text-gray-700">不计入总资产</span>
+                                </div>
+                                <button 
+                                    onClick={() => setEditingLedger({...editingLedger, excludeFromAsset: !editingLedger.excludeFromAsset})} 
+                                    className={`w-12 h-7 rounded-full transition-colors relative ${editingLedger.excludeFromAsset ? 'bg-black' : 'bg-gray-200'}`}
+                                >
+                                    <div className={`absolute top-1 left-1 bg-white w-5 h-5 rounded-full transition-transform shadow-sm ${editingLedger.excludeFromAsset ? 'translate-x-5' : ''}`} />
+                                </button>
+                           </div>
+
+                           <div className="flex items-center justify-between">
+                             <div><label className="text-xs text-gray-400 mb-2 block">主题颜色</label><div className="flex gap-2"><div className="relative w-8 h-8 rounded-full overflow-hidden shadow-sm border border-gray-100"><input type="color" value={editingLedger.color} onChange={(e) => setEditingLedger({...editingLedger, color: e.target.value})} className="absolute -top-4 -left-4 w-16 h-16 cursor-pointer"/></div></div></div>
+                             <div className="flex items-center gap-2"><span className="text-sm text-gray-600">置顶</span><button onClick={() => setEditingLedger({...editingLedger, isPinned: !editingLedger.isPinned})} className={`w-10 h-6 rounded-full transition-colors relative ${editingLedger.isPinned ? 'bg-blue-500' : 'bg-gray-200'}`}><div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${editingLedger.isPinned ? 'translate-x-4' : ''}`} /></button></div>
+                           </div>
+                        </div>
+                        <div className="p-4 bg-gray-50 flex gap-3">
+                          {!editingLedger.isNew && (<button onClick={() => handleDeleteLedger(editingLedger.id)} className="p-3 bg-red-100 text-red-500 rounded-xl hover:bg-red-200 transition"><Trash2 size={20} /></button>)}
+                          <button onClick={handleSaveSingleLedger} className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg shadow-blue-200 active:scale-95 transition-transform">保存</button>
+                        </div>
+                     </div>
+                   </div>
+                )}
+                {showBudgetModal && (
+                  <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                     <div className="bg-white w-full sm:max-w-md p-6 rounded-t-2xl sm:rounded-2xl shadow-2xl animate-in slide-in-from-bottom-10 h-[85vh] flex flex-col">
+                       <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4"><h3 className="text-lg font-bold text-gray-800">总预算预览与调整</h3><button onClick={() => setShowBudgetModal(false)} className="p-1 hover:bg-gray-100 rounded-full"><X size={20} className="text-gray-400"/></button></div>
+                       <div className="bg-blue-50 p-4 rounded-xl mb-4 border border-blue-100">
+                         <div className="flex justify-between items-center mb-2"><label className="text-xs font-bold text-blue-800">{getPeriodLabel()}预计总收入</label><div className="flex items-center gap-1 bg-white px-3 py-1.5 rounded-lg border border-blue-100 shadow-sm"><span className="text-blue-600 text-xs">¥</span><input type="number" value={tempTotalIncome} onChange={(e) => setTempTotalIncome(parseFloat(e.target.value) || 0)} className="w-24 bg-transparent text-right font-bold text-blue-900 focus:outline-none"/></div></div>
+                         <div className="text-xs text-blue-600 flex justify-between mt-2"><span>已分配预算: {formatMoney(tempAllocatedBudget)}</span><span className={tempTotalIncome - tempAllocatedBudget < 0 ? 'text-red-500 font-bold' : ''}>剩余: {formatMoney(tempTotalIncome - tempAllocatedBudget)}</span></div>
+                         <div className="w-full bg-blue-200 h-1.5 rounded-full mt-2 overflow-hidden"><div className={`h-full ${tempTotalIncome - tempAllocatedBudget < 0 ? 'bg-red-400' : 'bg-blue-500'}`} style={{ width: `${Math.min((tempAllocatedBudget / (tempTotalIncome || 1)) * 100, 100)}%` }}/></div>
+                       </div>
+                       <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+                         {draftLedgers.filter(l => !isSavingsLedger(l)).map(l => (
+                           <div key={l.id} className="border border-gray-100 rounded-xl p-3 hover:shadow-sm transition-shadow flex items-center justify-between">
+                             <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{backgroundColor: l.color}}></div><span className="text-sm font-bold text-gray-700">{l.name}</span></div>
+                             <div className="flex items-center gap-1 bg-gray-50 px-2 py-1 rounded-lg"><span className="text-gray-400 text-xs">¥</span><input type="number" value={l.displayBudget || 0} onChange={(e) => updateDraftLedger(l.id, 'displayBudget', e.target.value)} className="w-20 bg-transparent text-right font-bold text-gray-800 focus:outline-none"/></div>
+                           </div>
+                         ))}
+                       </div>
+                       <button onClick={handleSaveBudgets} className="w-full mt-4 bg-blue-600 text-white py-3.5 rounded-xl font-bold shadow-lg shadow-blue-200">保存设置</button>
+                     </div>
+                  </div>
+                )}
+                {showReportModal && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                     <div className="bg-white w-full sm:max-w-sm rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95">
+                       <div className="bg-gray-900 text-white p-6 relative overflow-hidden">
+                         <div className="absolute top-0 right-0 p-4 opacity-10"><FileText size={100} /></div>
+                         <div className="flex justify-between items-start mb-4 relative z-10"><div><h3 className="text-xl font-bold">盈亏分析报表</h3><p className="text-gray-400 text-xs mt-1">{getPeriodLabel()}财务健康度检查</p></div><button onClick={() => setShowReportModal(false)} className="text-white/60 hover:text-white"><X size={24}/></button></div>
+                         <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/10 relative z-10">
+                            <div className="flex justify-between items-end mb-2"><span className="text-xs text-gray-300">净盈余 (收入-支出)</span><span className={`text-2xl font-bold ${reportData.totalIncome - reportData.totalExpense >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(reportData.totalIncome - reportData.totalExpense)}</span></div>
+                            <div className="h-1 w-full bg-black/20 rounded-full overflow-hidden"><div className={`h-full ${reportData.totalIncome - reportData.totalExpense >= 0 ? 'bg-green-500' : 'bg-red-500'}`} style={{width: '100%'}}></div></div>
+                         </div>
+                       </div>
+                       <div className="p-6 max-h-[50vh] overflow-y-auto">
+                         <h4 className="text-sm font-bold text-gray-500 mb-3">预算执行情况</h4>
+                         <div className="space-y-3">
+                           {reportData.ledgerReports.map(item => (
+                             <div key={item.id} className="bg-gray-50 p-3 rounded-xl flex items-center justify-between">
+                               <div className="flex flex-col"><span className="font-bold text-gray-800 text-sm">{item.name}</span><span className="text-[10px] text-gray-400">预算 {formatMoney(item.periodBudget)}</span></div>
+                               <div className="text-right"><div className={`font-bold text-sm ${item.balance < 0 ? 'text-red-500' : 'text-green-600'}`}>{item.balance >= 0 ? '+' : ''}{formatMoney(item.balance)}</div><span className="text-[10px] text-gray-400">{item.balance < 0 ? '超支' : '结余'}</span></div>
+                             </div>
+                           ))}
+                         </div>
+                       </div>
+                     </div>
+                  </div>
+                )}
+                {showDataModal && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                    <div className="bg-white w-full max-w-xs p-6 rounded-2xl shadow-2xl">
+                      <h3 className="text-lg font-bold mb-4 text-center">数据备份与恢复</h3>
+                      <div className="space-y-3">
+                        <button onClick={exportData} className="w-full flex items-center justify-center gap-2 bg-blue-50 text-blue-600 py-3 rounded-xl font-medium hover:bg-blue-100 transition-colors"><Download size={18} /> 导出数据 (Backup)</button>
+                        <div className="relative"><input type="file" accept=".json" ref={fileInputRef} className="hidden" onChange={importData} /><button onClick={() => fileInputRef.current.click()} className="w-full flex items-center justify-center gap-2 bg-green-50 text-green-600 py-3 rounded-xl font-medium hover:bg-green-100 transition-colors"><Upload size={18} /> 导入数据 (Restore)</button></div>
+                      </div>
+                      <button onClick={() => setShowDataModal(false)} className="mt-6 w-full py-2 text-gray-400 text-sm hover:text-gray-600">关闭</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        }
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+
+    </script>
+</body>
+</html>
